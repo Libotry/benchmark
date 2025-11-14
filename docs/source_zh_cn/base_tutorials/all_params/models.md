@@ -40,7 +40,7 @@ models = [
         stream=False,    # 是否为流式接口
         request_rate = 0,           # 请求发送频率，每1/request_rate秒发送1个请求给服务端，小于0.1则一次性发送所有请求
         retry = 2,                  # 每个请求最大重试次数
-        headers={"Content-Type": "application/json"}, # 自定义请求头，默认{"Content-Type": "application/json"}
+        api_key="",               # 自定义API key，默认是空字符串
         host_ip = "localhost",      # 指定推理服务的IP
         host_port = 8080,           # 指定推理服务的端口
         url="",                     # 自定义访问推理服务的URL路径(当base url不是http://host_ip:host_port的组合时需要配置)
@@ -69,7 +69,7 @@ models = [
 | `request_rate` | Float | 请求发送速率（单位：秒），每隔 `1/request_rate` 秒发送一个请求；若小于 0.1 则自动合并为批量发送。合法范围：[0, 64000]。当`traffic_cfg`项配置启用时，该项功能可能被覆盖 （具体原因请参考 🔗 [请求速率(RPS)分布控制及可视化说明中的参数解读章节](../../advanced_tutorials/rps_distribution.md#参数解读)）|
 | `traffic_cfg` | Dict | 请求发送速率波动控制参数（具体使用说明请参考 🔗 [请求速率(RPS)分布控制及可视化说明](../../advanced_tutorials/rps_distribution.md)），不填写此项默认不启用该功能。 |
 | `retry` | Int | 连接服务端失败后的最大重试次数。合法范围：[0, 1000] |
-| `headers` | Dict | 自定义 HTTP 请求头，例如：`{"Authorization": "Bearer YOUR_API_KEY"}` |
+| `api_key` | String | 自定义API key，默认是空字符串。仅支持 `VLLMCustomAPI` 和 `VLLMCustomAPIChat` 模型类型。 |
 | `host_ip` | String | 服务端 IP 地址，支持合法 IPv4 或 IPv6，例如：`127.0.0.1` |
 | `host_port` | Int | 服务端端口号，应与服务化部署指定的端口一致 |
 | `url` | String | 自定义访问推理服务的URL路径(当base url不是http://host_ip:host_port的组合时需要配置，配置后host_ip和host_port将被忽略) ，例如当`models`的`type`为`VLLMCustomAPI`时，配置`url`为`https://xxxxxxx/yyyy/`，实际请求访问的URL为`https://xxxxxxx/yyyy/v1/completions`|
