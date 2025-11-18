@@ -44,7 +44,7 @@ models = [
         stream=False,    # Whether it is a streaming interface
         request_rate = 0,           # Request sending frequency: send 1 request to the server every 1/request_rate seconds; if less than 0.1, all requests are sent at once
         retry = 2,                  # Maximum number of retries for each request
-        headers={"Content-Type": "application/json"}, # Custom request headers, default is {"Content-Type": "application/json"}
+        api_key="",                 # Custom API key, default is an empty string
         host_ip = "localhost",      # Specify the IP address of the inference service
         host_port = 8080,           # Specify the port of the inference service
         url="",                     # Custom URL path for accessing the inference service (needs to be configured when the base URL is not a combination of http://host_ip:host_port)
@@ -74,7 +74,7 @@ The description of configurable parameters for the service-oriented inference ba
 | `request_rate` | Float | Request sending rate (unit: requests per second). A request is sent every `1/request_rate` seconds; if the value is less than 0.1, requests are automatically merged and sent in batches. Valid range: [0, 64000]. When the `traffic_cfg` item is enabled, this function may be overwritten (for specific reasons, refer to 🔗 [Parameter Interpretation Section in the Description of Request Rate (RPS) Distribution Control and Visualization](../../advanced_tutorials/rps_distribution.md#parameter-interpretation)) |
 | `traffic_cfg` | Dict | Parameters for controlling fluctuations in the request sending rate (for detailed usage instructions, refer to 🔗 [Description of Request Rate (RPS) Distribution Control and Visualization](../../advanced_tutorials/rps_distribution.md)). If this item is not filled in, the function is disabled by default |
 | `retry` | Int | Maximum number of retries after failing to connect to the server. Valid range: [0, 1000] |
-| `headers` | Dict | Custom request headers, default is `{"Content-Type": "application/json"}` |
+| `api_key` | String | Custom API key, default is an empty string. Only supports the `VLLMCustomAPI` and `VLLMCustomAPIChat` model type. |
 | `host_ip` | String | Server IP address, supporting valid IPv4 or IPv6, e.g., `127.0.0.1` |
 | `host_port` | Int | Server port number, which must be consistent with the port specified during service-oriented deployment |
 | `url` | String | Custom URL path for accessing the inference service (needs to be configured when the base URL is not a combination of http://host_ip:host_port).For example, when `models`'s `type` is `VLLMCustomAPI`, configure `url` as `https://xxxxxxx/yyyy/`, the actual request URL accessed is `https://xxxxxxx/yyyy/v1/completions` |
