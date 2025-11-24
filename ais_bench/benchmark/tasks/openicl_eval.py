@@ -13,6 +13,7 @@ from inspect import signature
 from typing import List
 import mmap
 import orjson
+from collections import defaultdict
 
 import mmengine
 from mmengine.config import Config, ConfigDict
@@ -29,6 +30,15 @@ from ais_bench.benchmark.utils.logging import AISLogger
 from ais_bench.benchmark.utils.logging.error_codes import TEVAL_CODES
 from ais_bench.benchmark.utils.logging.exceptions import ParameterValueError
 from ais_bench.benchmark.openicl.icl_evaluator.icl_base_evaluator import BaseEvaluator
+
+# Type mapping for default values using hash table (dict) driven approach
+TYPE_DEFAULT_MAP = {
+    list: [],
+    dict: {},
+    str: "",
+    int: 0,
+    float: 0,
+}
 
 
 @TASKS.register_module()
@@ -145,7 +155,6 @@ class OpenICLEvalTask(BaseTask):
                         mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
                         for line in iter(mm.readline, b""):
                             preds.append(orjson.loads(line))
-                preds.sort(key=lambda x: x.get('id',0))
             else:
                 filename = partial_filename
                 preds = []
@@ -156,6 +165,28 @@ class OpenICLEvalTask(BaseTask):
                         [sub_preds[str(i)] for i in range(len(sub_preds))])
                     filename = root + f'_{i}' + ext
                     i += 1
+            # Fail case will not include in jsonl results, mock it values to avoid error
+            total_ids = set(range(len(test_set) // num_return_sequences))
+            prediction_ids = {key:0 for key in total_ids}
+            for pred in preds:
+                current_id = pred.get('id')
+                prediction_ids[current_id] += 1
+
+            failed_data_ids = {key:num_return_sequences - value for key, value in prediction_ids.items() if value < num_return_sequences}
+            if failed_data_ids:
+                fail_count = sum(failed_data_ids.values())
+                self.logger.warning(
+                    f"Total {fail_count} data are not in the predictions. These data may failed in inference stage."
+                )
+                for failed_data_id in failed_data_ids.keys():
+                    mock_fail_data = {}
+                    for key, value in preds[0].items():
+                        # Use hash table lookup for type mapping
+                        value_type = type(value)
+                        mock_fail_data[key] = TYPE_DEFAULT_MAP.get(value_type)
+                    mock_fail_data["id"] = failed_data_id
+                    preds.extend([mock_fail_data] * failed_data_ids[failed_data_id])
+            preds.sort(key=lambda x: x.get('id',0))
             pred_dicts = copy.deepcopy(preds)
             preds = {k: [pred.get(k) for pred in preds] for k in preds[0]}
 

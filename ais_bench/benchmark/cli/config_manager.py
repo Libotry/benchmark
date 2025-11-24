@@ -128,7 +128,7 @@ class ConfigManager:
         ]
         for dataset_arg in self.args.datasets:
             if '/' in dataset_arg:
-                dataset_name, dataset_suffix = dataset_arg.split('/', 1)
+                dataset_name, _dataset_suffix = dataset_arg.split('/', 1)
             else:
                 dataset_name = dataset_arg
 

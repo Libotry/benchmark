@@ -183,6 +183,8 @@ def extract_non_reasoning_content(
         ['Start End', 'Result']
     """
     # If text contains only end token, split by end token and take the last part
+    if not isinstance(text, str):
+        return text
     if think_start_token not in text and think_end_token in text:
         return text.split(think_end_token)[-1].strip()
 

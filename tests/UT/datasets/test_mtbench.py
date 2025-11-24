@@ -12,16 +12,16 @@ from ais_bench.benchmark.datasets.mtbench import (
 
 class TestMTBenchDataset(unittest.TestCase):
     @patch("ais_bench.benchmark.datasets.mtbench.get_data_path", return_value="/fake/path")
-    @patch("ais_bench.benchmark.datasets.mtbench.get_logger")
+    @patch("ais_bench.benchmark.datasets.mtbench.AISLogger")
     @patch("builtins.open", new_callable=mock_open)
-    def test_load_with_reference(self, mock_open_file, mock_logger, mock_get_path):
+    def test_load_with_reference(self, mock_open_file, mock_ais_logger, mock_get_path):
         data = {
             "question_id": "1",
             "prompt": ["Q1?", "Q2?"],
             "reference": ["A1", "A2"]
         }
         mock_open_file.return_value.__iter__ = lambda self: iter([json.dumps(data) + "\n"])
-        mock_logger.return_value = MagicMock()
+        mock_ais_logger.return_value = MagicMock()
         
         ds = MTBenchDataset.load("/any")
         self.assertIsInstance(ds, Dataset)
@@ -31,15 +31,15 @@ class TestMTBenchDataset(unittest.TestCase):
         self.assertEqual(len(ds[0]["answer"]), 2)
 
     @patch("ais_bench.benchmark.datasets.mtbench.get_data_path", return_value="/fake/path")
-    @patch("ais_bench.benchmark.datasets.mtbench.get_logger")
+    @patch("ais_bench.benchmark.datasets.mtbench.AISLogger")
     @patch("builtins.open", new_callable=mock_open)
-    def test_load_without_reference(self, mock_open_file, mock_logger, mock_get_path):
+    def test_load_without_reference(self, mock_open_file, mock_ais_logger, mock_get_path):
         data = {
             "question_id": "1",
             "prompt": ["Q1?", "Q2?"]
         }
         mock_open_file.return_value.__iter__ = lambda self: iter([json.dumps(data) + "\n"])
-        mock_logger.return_value = MagicMock()
+        mock_ais_logger.return_value = MagicMock()
         
         ds = MTBenchDataset.load("/any")
         self.assertIsInstance(ds, Dataset)

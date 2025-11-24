@@ -113,7 +113,10 @@ models = dict(
 
 ## UTILS-CFG-002
 ### 错误描述
+通过模型配置文件内参数初始化模型实例时，因为参数内容非法而失败。
 ### 解决办法
+检查日志中`build failed with the following errors:{error_content}`，依据`error_content`的提示修正模型配置文件内参数。
+例如模型配置文件中`batch_size`参数值为100001，`error_content`为`"batch_size must be an integer in the range (0, 100000]`，表面batch_size参数超出了合法范围（0, 100000]，那么需要将`batch_size`参数值修正为100000。
 
 ## UTILS-CFG-003
 ### 错误描述

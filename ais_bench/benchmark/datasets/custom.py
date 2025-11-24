@@ -12,9 +12,10 @@ from ais_bench.benchmark.openicl.icl_evaluator import AccEvaluator, BaseEvaluato
 from ais_bench.benchmark.openicl.icl_prompt_template import PromptTemplate
 from ais_bench.benchmark.openicl.icl_retriever import ZeroRetriever
 from ais_bench.benchmark.registry import LOAD_DATASET
-from ais_bench.benchmark.datasets.utils.datasets import get_data_path, get_meta_json, get_logger
+from ais_bench.benchmark.datasets.utils.datasets import get_data_path, get_meta_json
 from ais_bench.benchmark.datasets.utils.datasets import get_sample_data
 from ais_bench.benchmark.utils.core.types import check_meta_json_dict, check_output_config_from_meta_json
+from ais_bench.benchmark.utils.logging.logger import AISLogger
 
 from .base import BaseDataset
 
@@ -112,16 +113,20 @@ class CustomDataset(BaseDataset):
                 data = [dict(zip(header, row)) for row in reader]
         else:
             raise ValueError(f'Unsupported file format: {path}')
+        for d in data:
+            max_out_len = d.pop("max_tokens", None)
+            if max_out_len is not None:
+                d["max_out_len"] = max_out_len
         meta_json_conf = get_meta_json(path, meta_path)
         if meta_json_conf:
-            if check_output_config_from_meta_json(meta_json_conf):
-                max_token_list = get_max_token_list_from_meta_json_file(meta_json_conf['output_config'], len(data))
-                for i in range(len(data)):
-                    data[i]['max_out_len'] = max_token_list[i] # output_config in meta.json will override max_out_len in custom dataset file
             meta_json_conf = check_meta_json_dict(meta_json_conf)
             sample_mode = meta_json_conf.get('sampling_mode', 'default')
             request_count = meta_json_conf.get('request_count', 0)
             data = get_sample_data(data, sample_mode, int(request_count))
+            if check_output_config_from_meta_json(meta_json_conf):
+                max_token_list = get_max_token_list_from_meta_json_file(meta_json_conf['output_config'], len(data))
+                for i in range(len(data)):
+                    data[i]['max_out_len'] = max_token_list[i] # output_config in meta.json will override max_out_len in custom dataset file
         return Dataset.from_list(data)
 
 
@@ -282,7 +287,7 @@ def parse_example_dataset(config):
 
 def make_custom_dataset_config(config):
     # considered as a custom dataset
-    logger = get_logger()
+    logger = AISLogger()
     meta = parse_example_dataset(config)
     make_config_func = {
         ('mcq', 'gen'): make_mcq_gen_config,
@@ -305,7 +310,7 @@ def get_max_token_list_from_meta_json_file(output_config: dict, prompt_length):
     """
     method = output_config["method"]
     params = output_config["params"]
-    logger = get_logger()
+    logger = AISLogger()
     logger.info("Distribution Summary: ")
     if method == "uniform":
         logger.info(f"--uniform distribution with min_value: {params['min_value']}, max_value: {params['max_value']}")

@@ -5,10 +5,13 @@ from datasets import Dataset
 from ais_bench.benchmark.openicl.icl_evaluator import BaseEvaluator
 from ais_bench.benchmark.registry import LOAD_DATASET
 from ais_bench.benchmark.datasets.utils.datasets import get_data_path
+from ais_bench.benchmark.utils.logging.logger import AISLogger
 
 from ..base import BaseDataset
 from .evaluation_main import (InputExample, test_instruction_following_loose,
                               test_instruction_following_strict)
+
+logger = AISLogger()
 
 
 @LOAD_DATASET.register_module()
@@ -17,18 +20,21 @@ class IFEvalDataset(BaseDataset):
     @staticmethod
     def load(path):
         path = get_data_path(path, local_mode=True)
+        logger.debug(f"Loading IFEval dataset from: {path}")
         datasets = []
         with open(path, 'r', encoding='utf-8') as file:
             for line in file:
                 tmp = json.loads(line.strip())
                 dataset = dict(prompt=tmp['prompt'], reference=tmp)
                 datasets.append(dataset)
+        logger.debug(f"IFEval dataset loaded: {len(datasets)} samples")
         return Dataset.from_list(datasets)
 
 
 class IFEvaluator(BaseEvaluator):
 
     def score(self, predictions, references, origin_prompt):
+        logger.debug(f"Starting IFEval evaluation with {len(predictions)} samples")
         prompt_strict_correct, prompt_strict_total = 0, 0
         inst_strict_correct, inst_strict_total = 0, 0
         prompt_loose_correct, prompt_loose_total = 0, 0
@@ -94,4 +100,6 @@ class IFEvaluator(BaseEvaluator):
             'details':
             details
         }
+        
+        logger.debug(f"IFEval evaluation completed.")
         return results

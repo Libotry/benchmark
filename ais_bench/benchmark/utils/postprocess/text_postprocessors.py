@@ -36,7 +36,10 @@ def general_cn_postprocess(text: str) -> str:
                          flags=re.IGNORECASE)
 
     cleaned_text = re.sub(r'\s+', ' ', no_articles).strip()
-    import jieba
+    import warnings
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='.*pkg_resources is deprecated.*', category=UserWarning)
+        import jieba
     cleaned_text = ' '.join(jieba.cut(text))
     return cleaned_text
 

@@ -8,8 +8,13 @@ from datasets import Dataset, DatasetDict
 from ais_bench.benchmark.openicl import BaseEvaluator
 from ais_bench.benchmark.registry import LOAD_DATASET, TEXT_POSTPROCESSORS
 from ais_bench.benchmark.datasets.utils.datasets import get_data_path
+from ais_bench.benchmark.utils.logging.logger import AISLogger
+from ais_bench.benchmark.utils.logging.error_codes import DSET_CODES
+from ais_bench.benchmark.utils.logging.exceptions import AISBenchDataContentError
 
 from .base import BaseDataset
+
+logger = AISLogger()
 
 
 @LOAD_DATASET.register_module()
@@ -18,6 +23,7 @@ class GSM8KDataset(BaseDataset):
     @staticmethod
     def load(path):
         path = get_data_path(path, local_mode=True)
+        logger.debug(f"Loading GSM8K dataset from: {path}")
 
         datasets = {}
         for split in ['train', 'test']:
@@ -29,6 +35,7 @@ class GSM8KDataset(BaseDataset):
                     dataset.append(line)
             datasets[split] = Dataset.from_list(dataset)
         dataset = DatasetDict(datasets)
+        logger.debug(f"GSM8K dataset loaded successfully with {len(datasets)} splits")
         return dataset
 
 
@@ -52,12 +59,14 @@ class Gsm8kEvaluator(BaseEvaluator):
         try:
             if pred == refer or abs(float(pred) - int(refer)) < 1e-6:
                 return True
-        except Exception:
+        except (ValueError, TypeError) as e:
+            logger.debug(f"Failed to compare pred='{pred}' and refer='{refer}': {e}")
             pass
         return False
 
     def score(self, predictions, references):
         if len(predictions) != len(references):
+            logger.warning(f"Predictions and references have different length: {len(predictions)} vs {len(references)}")
             return {
                 'error': 'predictions and references have different '
                 'length'
@@ -92,7 +101,8 @@ class Gsm8kAgentEvaluator(BaseEvaluator):
         try:
             if pred == refer or abs(float(pred) - int(refer)) < 1e-6:
                 return True
-        except Exception:
+        except (ValueError, TypeError) as e:
+            logger.debug(f"Failed to compare pred='{pred}' and refer='{refer}': {e}")
             pass
         return False
 
@@ -101,9 +111,9 @@ class Gsm8kAgentEvaluator(BaseEvaluator):
             soft_pred = step['result']['text']
             if abs(float(soft_pred) - int(refer)) < 1e-6:
                 return True
-        except Exception:
-            # result might not exists
-            # text cannot convert to float
+        except (KeyError, ValueError, TypeError) as e:
+            # result might not exists or text cannot convert to float
+            logger.debug(f"Failed soft_equal comparison: {e}")
             pass
         return False
 

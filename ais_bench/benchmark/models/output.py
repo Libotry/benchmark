@@ -17,9 +17,10 @@ class Output:
         self.extra_perf_data: dict = {}
         self.extra_details_data: dict = {}
         self.input: list | str = None
-        self.uuid: str = ""  # A unique identifier for each case:
-                             # In multi-turn dialogue scenarios, all turns of the same sample share the same uuid.
-                             # In pass@k scenarios, the same sample is sampled k times and each run receives a distinct uuid
+        self.uuid: str = ""  
+        # A unique identifier for each case:
+        # In multi-turn dialogue scenarios, all turns of the same sample share the same uuid.
+        # In pass@k scenarios, the same sample is sampled k times and each run receives a distinct uuid
         self.turn_id: int = 0
 
     @abstractmethod
@@ -28,6 +29,42 @@ class Output:
 
         Returns:
             dict: Cleaned metrics dictionary with performance data
+        """
+        pass
+
+    def update_extra_perf_data_from_stream_response(
+        self, stream_response: dict
+    ) -> None:
+        """Update the extra perf data from response.
+
+        Args:
+            stream_response: Stream response
+        """
+        pass
+
+    def update_extra_perf_data_from_text_response(self, text_response: dict) -> None:
+        """Update the extra perf data from text response.
+
+        Args:
+            text_response: Text response
+        """
+        pass
+
+    def update_extra_details_data_from_stream_response(
+        self, stream_response: dict
+    ) -> None:
+        """Update the extra details data from stream response.
+
+        Args:
+            stream_response: Stream response
+        """
+        pass
+
+    def update_extra_details_data_from_text_response(self, text_response: dict) -> None:
+        """Update the extra details data from text response.
+
+        Args:
+            text_response: Text response
         """
         pass
 
@@ -102,6 +139,7 @@ class RequestOutput(Output):
         Returns:
             dict: Enhanced metrics dictionary with request-specific performance data
         """
+
         def clean_result(res):
             for key in ["content", "reasoning_content", "perf_mode"]:
                 res.pop(key, None)
@@ -118,3 +156,22 @@ class RequestOutput(Output):
             self.error_info = "chunk size is less than 2"
         result = clean_result(self.to_dict())
         return result
+
+
+class FunctionCallOutput(Output):
+
+    def __init__(self, perf_mode: bool = False) -> None:
+        super().__init__(perf_mode)
+        self.inference_log: list[dict] = []
+        self.tool_calls: list[dict] = []
+
+    def update_extra_details_data_from_text_response(self, text_response: dict) -> None:
+        """Update the extra details data from text response.
+
+        Args:
+            text_response: Text response
+        """
+        for item in text_response.get("choices", []):
+            message = item.get("message", {})
+            self.extra_details_data["message"] = message
+            return  # only one message is allowed

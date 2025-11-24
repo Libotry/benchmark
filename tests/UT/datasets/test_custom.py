@@ -79,7 +79,7 @@ class TestCustomDataset(unittest.TestCase):
         content = '{"question": "q", "answer": "a"}\n'
         mock_open_file.return_value = mock_open(read_data=content).return_value
         with patch('ais_bench.benchmark.datasets.custom.check_output_config_from_meta_json', return_value=True), \
-             patch('ais_bench.benchmark.datasets.custom.check_meta_json_dict', return_value={'sampling_mode': 'default', 'request_count': 0}), \
+             patch('ais_bench.benchmark.datasets.custom.check_meta_json_dict', return_value={'output_config': {"method": "uniform", "params": {"min_value": 1, "max_value": 1}}, 'sampling_mode': 'default', 'request_count': 0}), \
              patch('ais_bench.benchmark.datasets.custom.get_max_token_list_from_meta_json_file', return_value=[5]):
             ds = CustomDataset.load('/input', file_name='data.jsonl', meta_path='meta.json')
             self.assertEqual(ds[0]['max_out_len'], 5)
@@ -118,9 +118,8 @@ class TestHelpers(unittest.TestCase):
         self.assertEqual(out['type'], f'{DummyCls.__module__}.{DummyCls.__name__}')
         self.assertEqual(out['nested']['type'], f'{DummyCls.__module__}.{DummyCls.__name__}')
 
-    @patch('ais_bench.benchmark.datasets.custom.get_logger')
-    def test_make_mcq_gen_config(self, mock_logger):
-        mock_logger.return_value = MagicMock()
+    def test_make_mcq_gen_config(self):
+        logger = MagicMock()
         meta = {
             'options': ['A', 'B'],
             'output_column': 'answer',
@@ -130,13 +129,12 @@ class TestHelpers(unittest.TestCase):
             'meta_path': 'meta',
             'test_range': '[:10]',
         }
-        dataset = make_mcq_gen_config(meta, mock_logger.return_value)
+        dataset = make_mcq_gen_config(meta, logger)
         self.assertIn('reader_cfg', dataset)
         self.assertIn('test_range', dataset['reader_cfg'])
 
-    @patch('ais_bench.benchmark.datasets.custom.get_logger')
-    def test_make_qa_gen_config(self, mock_logger):
-        mock_logger.return_value = MagicMock()
+    def test_make_qa_gen_config(self):
+        logger = MagicMock()
         meta = {
             'output_column': 'answer',
             'input_columns': ['question'],
@@ -144,7 +142,7 @@ class TestHelpers(unittest.TestCase):
             'path': 'path',
             'meta_path': 'meta',
         }
-        dataset = make_qa_gen_config(meta, mock_logger.return_value)
+        dataset = make_qa_gen_config(meta, logger)
         self.assertIn('infer_cfg', dataset)
 
     @patch('builtins.open')
@@ -164,9 +162,9 @@ class TestHelpers(unittest.TestCase):
             parse_example_dataset({'path': 'sample.txt'})
 
     @patch('ais_bench.benchmark.datasets.custom.parse_example_dataset')
-    @patch('ais_bench.benchmark.datasets.custom.get_logger')
-    def test_make_custom_dataset_config(self, mock_logger, mock_parse):
-        mock_logger.return_value = MagicMock()
+    @patch('ais_bench.benchmark.datasets.custom.AISLogger')
+    def test_make_custom_dataset_config(self, mock_ais_logger, mock_parse):
+        mock_ais_logger.return_value = MagicMock()
         mock_parse.return_value = {
             'data_type': 'mcq',
             'infer_method': 'gen',
@@ -181,23 +179,23 @@ class TestHelpers(unittest.TestCase):
         self.assertIn('type', dataset)
 
     @patch('ais_bench.benchmark.datasets.custom.parse_example_dataset', return_value={'data_type': 'qa', 'infer_method': 'unsupported'})
-    @patch('ais_bench.benchmark.datasets.custom.get_logger')
-    def test_make_custom_dataset_config_invalid(self, mock_logger, mock_parse):
-        mock_logger.return_value = MagicMock()
+    @patch('ais_bench.benchmark.datasets.custom.AISLogger')
+    def test_make_custom_dataset_config_invalid(self, mock_ais_logger, mock_parse):
+        mock_ais_logger.return_value = MagicMock()
         with self.assertRaises(ValueError):
             make_custom_dataset_config({'path': 'path'})
 
-    @patch('ais_bench.benchmark.datasets.custom.get_logger')
+    @patch('ais_bench.benchmark.datasets.custom.AISLogger')
     @patch('numpy.random.randint', return_value=np.array([1, 2, 3]))
-    def test_get_max_token_uniform(self, mock_rand, mock_logger):
-        mock_logger.return_value = MagicMock()
+    def test_get_max_token_uniform(self, mock_rand, mock_ais_logger):
+        mock_ais_logger.return_value = MagicMock()
         cfg = {"method": "uniform", "params": {"min_value": 1, "max_value": 3}}
         result = get_max_token_list_from_meta_json_file(cfg, 3)
         self.assertEqual(result, [1, 2, 3])
 
-    @patch('ais_bench.benchmark.datasets.custom.get_logger')
-    def test_get_max_token_percentage(self, mock_logger):
-        mock_logger.return_value = MagicMock()
+    @patch('ais_bench.benchmark.datasets.custom.AISLogger')
+    def test_get_max_token_percentage(self, mock_ais_logger):
+        mock_ais_logger.return_value = MagicMock()
         cfg = {
             "method": "percentage",
             "params": {
@@ -207,9 +205,9 @@ class TestHelpers(unittest.TestCase):
         result = get_max_token_list_from_meta_json_file(cfg, 3)
         self.assertEqual(result, [2, 2, 2])
 
-    @patch('ais_bench.benchmark.datasets.custom.get_logger')
-    def test_get_max_token_invalid(self, mock_logger):
-        mock_logger.return_value = MagicMock()
+    @patch('ais_bench.benchmark.datasets.custom.AISLogger')
+    def test_get_max_token_invalid(self, mock_ais_logger):
+        mock_ais_logger.return_value = MagicMock()
         with self.assertRaises(ValueError):
             get_max_token_list_from_meta_json_file({"method": "other", "params": {}}, 2)
 

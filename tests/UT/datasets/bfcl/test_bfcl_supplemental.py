@@ -89,15 +89,15 @@ class TestBFCLDatasetTestIDFiltering(BFCLSupplementalTestBase):
     
     @patch('ais_bench.benchmark.datasets.bfcl.bfcl.BFCL_INSTALLED', True)
     @patch('ais_bench.benchmark.datasets.bfcl.bfcl.get_data_path')
-    @patch('builtins.open', new_callable=mock_open)
+    @patch('builtins.open')
     @patch('ais_bench.benchmark.datasets.bfcl.bfcl.process_multi_turn_test_case')
-    @patch('ais_bench.benchmark.datasets.bfcl.bfcl.get_logger')
-    def test_load_with_missing_test_ids(self, mock_logger, mock_process, mock_file, mock_get_path):
+    @patch('ais_bench.benchmark.datasets.bfcl.bfcl.AISLogger')
+    def test_load_with_missing_test_ids(self, mock_ais_logger, mock_process, mock_file, mock_get_path):
         """测试当某些 test_ids 不存在时记录警告"""
         mock_get_path.side_effect = lambda x: x
         mock_process.return_value = []
         logger_instance = MagicMock()
-        mock_logger.return_value = logger_instance
+        mock_ais_logger.return_value = logger_instance
         
         dataset_data = [
             json.dumps({"id": "test1", "question": "Q1"}),
@@ -109,13 +109,20 @@ class TestBFCLDatasetTestIDFiltering(BFCLSupplementalTestBase):
             json.dumps({"id": "test2", "ground_truth": ["GT2"]})
         ]
         
-        # 模拟两次文件打开：dataset 和 ground truth
-        mock_file.return_value.__enter__.return_value = iter(dataset_data)
+        # 创建两个 mock 文件对象，分别用于 dataset 和 ground truth
+        mock_dataset_file = MagicMock()
+        mock_dataset_file.__enter__ = MagicMock(return_value=iter([line + '\n' for line in dataset_data]))
+        mock_dataset_file.__exit__ = MagicMock(return_value=None)
         
-        def side_effect(*args, **kwargs):
-            if 'possible_answer' in args[0]:
-                return mock_open(read_data='\n'.join(gt_data))()
-            return mock_open(read_data='\n'.join(dataset_data))()
+        mock_gt_file = MagicMock()
+        mock_gt_file.__enter__ = MagicMock(return_value=iter([line + '\n' for line in gt_data]))
+        mock_gt_file.__exit__ = MagicMock(return_value=None)
+        
+        # 根据文件路径返回不同的 mock 文件
+        def side_effect(path, *args, **kwargs):
+            if 'possible_answer' in path:
+                return mock_gt_file
+            return mock_dataset_file
         
         mock_file.side_effect = side_effect
         
@@ -171,7 +178,8 @@ class TestBFCLMultiTurnEvaluatorErrors(BFCLSupplementalTestBase):
         evaluator = BFCLMultiTurnEvaluator(category='python', is_fc_model=True)
         
         # 使用有效的 JSON 但类型不是列表（是字典）
-        predictions = [json.dumps({"result": "not a list"})]
+        # 注意：predictions应该是列表，但这里测试的是非列表格式，所以直接使用字典
+        predictions = [{"result": "not a list"}]  # 不是列表格式
         references = [json.dumps([["GT1"]])]
         test_set = [{
             'id': 'multi_turn_test1',
@@ -193,7 +201,8 @@ class TestBFCLMultiTurnEvaluatorErrors(BFCLSupplementalTestBase):
         evaluator = BFCLMultiTurnEvaluator(category='python', is_fc_model=True)
         
         # 模型输出的轮数与 ground truth 不匹配
-        predictions = [json.dumps([['result1']])]  # 只有1轮
+        # 注意：predictions应该是列表，不是JSON字符串
+        predictions = [[['result1']]]  # 只有1轮，直接使用列表
         references = [json.dumps([["GT1"], ["GT2"]])]  # 有2轮
         test_set = [{
             'id': 'multi_turn_test1',
@@ -208,7 +217,9 @@ class TestBFCLMultiTurnEvaluatorErrors(BFCLSupplementalTestBase):
         
         # 应该记录强制终止错误
         self.assertIn('error', result['details'][0])
+        # 错误类型是 'multi_turn:force_terminated'，不是 'force_terminated'
         self.assertIn('force_terminated', result['details'][0]['error']['error_type'])
+        self.assertIn('multi_turn:force_terminated', result['details'][0]['error']['error_type'])
 
 
 class TestBFCLMultiTurnEvaluatorEmptyOutput(BFCLSupplementalTestBase):
@@ -221,7 +232,8 @@ class TestBFCLMultiTurnEvaluatorEmptyOutput(BFCLSupplementalTestBase):
         # Mock decode_execute 返回空结果
         with patch.object(evaluator, 'decode_execute', return_value=[]):
             with patch('ais_bench.benchmark.datasets.bfcl.bfcl.is_empty_execute_response', return_value=True):
-                predictions = [json.dumps([[{'function': 'test'}]])]
+                # 注意：predictions应该是列表，不是JSON字符串
+                predictions = [[[{'function': 'test'}]]]  # 直接使用列表
                 references = [json.dumps([["GT1"]])]
                 test_set = [{
                     'id': 'multi_turn_test1',

@@ -28,7 +28,7 @@ from scipy.optimize import linear_sum_assignment
 from PIL import Image, ImageDraw
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from ais_bench.benchmark.datasets.omnidocbench.registory import METRIC_REGISTRY
+from ais_bench.benchmark.datasets.omnidocbench.registry import METRIC_REGISTRY
 
 
 SKIP_PATTERNS = [r'\{', r'\}', r'[\[\]]', r'\\begin\{.*?\}', r'\\end\{.*?\}', r'\^', r'\_', r'\\.*rule.*', r'\\.*line.*', r'\[[\-.0-9]+[epm][xtm]\]']
@@ -638,7 +638,7 @@ def tokenize_latex(latex_code, latex_type="", middle_file=""):
         if ret != 0:
             return False, latex_code
         
-        operators = '\s?'.join('|'.join(['arccos', 'arcsin', 'arctan', 'arg', 'cos', 'cosh', 'cot', 'coth', 'csc', 'deg', 'det', 'dim', 'exp', 'gcd', 'hom', 'inf',
+        operators = r'\s?'.join('|'.join(['arccos', 'arcsin', 'arctan', 'arg', 'cos', 'cosh', 'cot', 'coth', 'csc', 'deg', 'det', 'dim', 'exp', 'gcd', 'hom', 'inf',
                                         'injlim', 'ker', 'lg', 'lim', 'liminf', 'limsup', 'ln', 'log', 'max', 'min', 'Pr', 'projlim', 'sec', 'sin', 'sinh', 'sup', 'tan', 'tanh']))
         ops = re.compile(r'\\operatorname {(%s)}' % operators)
         with open(middle_file, 'r') as fin:
@@ -656,9 +656,9 @@ def tokenize_latex(latex_code, latex_type="", middle_file=""):
     
     elif latex_type == "tabular":
         latex_code = latex_code.replace("\\\\%", "\\\\ %")
-        latex_code = latex_code.replace("\%", "<PERCENTAGE_TOKEN>")
+        latex_code = latex_code.replace(r"\%", "<PERCENTAGE_TOKEN>")
         latex_code = latex_code.split('%')[0]
-        latex_code = latex_code.replace("<PERCENTAGE_TOKEN>", "\%")
+        latex_code = latex_code.replace("<PERCENTAGE_TOKEN>", r"\%")
         if not "\\end{tabular}" in latex_code:
             latex_code += "\\end{tabular}"
         with open(middle_file, 'w') as f:
@@ -912,7 +912,7 @@ def normalize_latex(l, rm_trail=False):
     return l
 
 def token_add_color_RGB(l_split, idx, token_list, brace_color=False):
-    """using \mathcolor[RGB]{r,g,b} to render latex. 
+    r"""using \mathcolor[RGB]{r,g,b} to render latex. 
     """
     token = l_split[idx]
     if not token:
@@ -1035,13 +1035,13 @@ def latex2bbox_color(input_arg):
     
     try:
         latex = latex.replace("\n", " ")
-        latex = latex.replace("\%", "<PERCENTAGETOKEN>")
+        latex = latex.replace(r"\%", "<PERCENTAGETOKEN>")
         ret, new_latex = tokenize_latex(latex, middle_file=os.path.join(temp_dir, basename+'.txt'))
         if not(ret and new_latex):
             log = f"ERROR, Tokenize latex failed: {basename}."
             logging.info(log)
             new_latex = latex
-        new_latex = new_latex.replace("< P E R C E N T A G E T O K E N >", "\%")
+        new_latex = new_latex.replace("< P E R C E N T A G E T O K E N >", r"\%")
         latex = normalize_latex(new_latex)
         token_list = []
         l_split = latex.strip().split(' ')

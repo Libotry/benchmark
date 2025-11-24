@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import ast
 from copy import deepcopy
 from typing import Dict, List, Union
 
@@ -116,37 +117,48 @@ class PromptList(list):
                 new_item = deepcopy(item)
                 if 'prompt' in item:
                     new_item['prompt'] = safe_format(item['prompt'], **kwargs)
-                elif 'prompt_mm' in item:
-                    self.format_mm(new_item=new_item, item=item, **kwargs)
                 new_list.append(new_item)
             else:
                 new_list.append(safe_format(item, **kwargs))
         return new_list
 
-    def format_mm(self, new_item, item, **kwargs) -> PromptList:
+    def format_mm(self, **kwargs) -> PromptList:
         """
         Format multimedia fields (image/video/audio/text) in-place.
         If the field value is a dict containing {'url': ...}, only the url
         part is formatted; otherwise the whole value is formatted.
         """
-        mm = item.get('prompt_mm', {})
-        new_mm = new_item.setdefault('prompt_mm', {})
-
-        #image_url/video_url/audio_url
-        for field in ('image_url', 'video_url', 'audio_url'):
-            if field not in mm:
-                continue
-            val = mm[field]
-            if isinstance(val, dict) and val.get('url') is not None:
-                val = val.copy()
-                val['url'] = safe_format(val['url'], **kwargs)
+        new_list = PromptList()
+        for item in self:
+            if isinstance(item, Dict):
+                new_item = deepcopy(item)
+                if 'prompt_mm' in item:
+                    mm = item.get('prompt_mm', {})
+                    new_mm = new_item.setdefault('prompt_mm', {})
+                    # mmmu
+                    if isinstance(mm, str):
+                        new_item['prompt_mm'] = json.loads(safe_format(mm, **kwargs))
+                    if not isinstance(mm, dict):
+                        # Optional: raise or skip if unexpected type after parsing
+                        pass
+                    else:
+                        #image_url/video_url/audio_url
+                        for field in ('image_url', 'video_url', 'audio_url'):
+                            if field in mm:
+                                val = mm[field]
+                                if isinstance(val, dict) and val.get('url') is not None:
+                                    val = val.copy()
+                                    val['url'] = safe_format(val['url'], **kwargs)
+                                else:
+                                    val = safe_format(val, **kwargs)
+                                new_mm[field] = val
+                        # text
+                        if 'text' in mm:
+                            new_mm['text'] = safe_format(mm['text'], **kwargs)
+                new_list.append(new_item)
             else:
-                val = safe_format(val, **kwargs)
-            new_mm[field] = val
-
-        # text
-        if 'text' in mm:
-            new_mm['text'] = safe_format(mm['text'], **kwargs)
+                new_list.append(safe_format(item, **kwargs))
+        return new_list
 
     def replace(self, src: str, dst: Union[str, PromptList]) -> PromptList:
         """Replaces all instances of 'src' in the PromptList with 'dst'.

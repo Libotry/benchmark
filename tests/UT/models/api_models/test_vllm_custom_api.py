@@ -1,9 +1,10 @@
 import unittest
 import asyncio
+import json
 from unittest.mock import patch, MagicMock, AsyncMock
 from typing import Dict
 
-from ais_bench.benchmark.models.api_models.vllm_custom_api import VLLMCustomAPI
+from ais_bench.benchmark.models import VLLMCustomAPI
 from ais_bench.benchmark.models.output import Output
 from ais_bench.benchmark.utils.prompt import PromptList
 
@@ -321,6 +322,41 @@ class TestVLLMCustomAPI(unittest.TestCase):
 
     def test_parse_stream_response_no_choices_wrapper(self):
         self.run_async_test(self.test_parse_stream_response_no_choices())
+
+    def test_calc_ppl(self):
+        """测试_calc_ppl方法"""
+        model = VLLMCustomAPI(**self.default_kwargs)
+        
+        # 测试正常的logprobs列表
+        prompt_logprobs = [
+            {"1": {"logprob": -0.5}},
+            {"2": {"logprob": -0.3}},
+            {"3": {"logprob": -0.7}}
+        ]
+        
+        ppl = model._calc_ppl(prompt_logprobs)
+        
+        # 计算期望值: -(-0.5 - 0.3 - 0.7) / 3 = 1.5 / 3 = 0.5
+        expected_ppl = -(-0.5 - 0.3 - 0.7) / 3
+        self.assertAlmostEqual(ppl, expected_ppl, places=5)
+
+    def test_calc_ppl_with_none(self):
+        """测试_calc_ppl处理None值"""
+        model = VLLMCustomAPI(**self.default_kwargs)
+        
+        # 测试包含None的logprobs列表
+        prompt_logprobs = [
+            {"1": {"logprob": -0.5}},
+            None,
+            {"3": {"logprob": -0.7}}
+        ]
+        
+        ppl = model._calc_ppl(prompt_logprobs)
+        
+        # 只计算非None的值: -(-0.5 - 0.7) / 2 = 1.2 / 2 = 0.6
+        expected_ppl = -(-0.5 - 0.7) / 2
+        self.assertAlmostEqual(ppl, expected_ppl, places=5)
+
 
 
 if __name__ == "__main__":

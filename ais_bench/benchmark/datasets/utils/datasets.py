@@ -1,10 +1,14 @@
 import os
 import random
 import json
+import io
+import base64
+from PIL import Image
+import copy
 
-from ais_bench.benchmark.utils.logging.logging import get_logger
+from ais_bench.benchmark.utils.logging.logger import AISLogger
 
-logger = get_logger()
+logger = AISLogger()
 # These datasets can only be used to evaluate performance.
 ONLY_PERF_DATASETS = [
     "ais_bench.benchmark.datasets.MTBenchDataset",
@@ -58,13 +62,27 @@ def get_data_path(dataset_path: str, local_mode: bool = True):
 
 
 def get_sample_data(data_list: list, sample_mode: str = "default", request_count: int = 0):
+    """Get sample data from data_list.
+
+    Args:
+        data_list (list): Data list.
+        sample_mode (str): Sample mode.
+        request_count (int): Request count.
+    
+    Raises:
+        ValueError: If sample mode is not supported.
+        ValueError: If request count is negative.
+
+    Returns:
+        list: Sampled data list.
+    """
     if not request_count:
         logger.info("If u do not provide 'request_count' when using custom-dataset sampling feature, "
                        "we will sample all available data by default.")
         sample_index = len(data_list)
     elif request_count > len(data_list):
         repeat_times = (request_count // len(data_list)) + (1 if request_count % len(data_list) != 0 else 0)
-        data_list = (data_list * repeat_times)[:request_count]
+        data_list = [copy.deepcopy(item) for item in data_list * repeat_times][:request_count]
         sample_index = request_count
     elif request_count < 0:
         raise ValueError("The 'request_count' is negative, we only support positive integer.")
@@ -72,11 +90,12 @@ def get_sample_data(data_list: list, sample_mode: str = "default", request_count
         sample_index = request_count
     # sampling data
     if sample_mode == "default":
-        return data_list[:sample_index]
+        return [copy.deepcopy(item) for item in data_list[:sample_index]]
     elif sample_mode == "random":
-        return random.sample(data_list, sample_index)
+        sampled_items = random.sample(data_list, sample_index)
+        return [copy.deepcopy(item) for item in sampled_items]
     elif sample_mode == "shuffle":
-        shuffle_data = data_list[:sample_index]
+        shuffle_data = [copy.deepcopy(item) for item in data_list[:sample_index]]
         random.shuffle(shuffle_data)
         return shuffle_data
     else:
@@ -95,3 +114,45 @@ def get_meta_json(dataset_path, meta_path):
             raise ValueError(f'The file path specified by parameter "meta_path" does not exist: {ori_meta_path}')
         meta_json_conf = {}
     return meta_json_conf
+
+def toliststr(s):
+    if isinstance(s, str) and len(s) >= 1 and (s[0] == '[') and (s[-1] == ']'):
+        return [str(x) for x in eval(s)]
+    elif isinstance(s, str):
+        return [s]
+    elif isinstance(s, list):
+        return [str(x) for x in s]
+    raise NotImplementedError
+
+def decode_base64_to_image(base64_string, target_size=-1):
+    """Decodes a base64-encoded string into a PIL Image, with optional resizing and mode normalization.
+
+    This function:
+      - Decodes the input base64 string into binary image data.
+      - Loads it as a PIL `Image` object.
+      - Converts images with transparency or palette modes (e.g., 'RGBA', 'P', 'LA') to 'RGB'.
+      - Optionally resizes the image to fit within a square of side `target_size` using
+        `Image.thumbnail` (preserving aspect ratio).
+    Args:
+        base64_string (str): A base64-encoded representation of an image file (e.g., PNG, JPEG).
+        target_size (int, optional): Maximum width and height for the output image.
+            If `target_size > 0`, the image is resized to fit within this bound while
+            preserving aspect ratio. Defaults to -1 (no resizing).
+    Returns:
+        PIL.Image.Image: A normalized RGB image, optionally resized.
+    """
+    image_data = base64.b64decode(base64_string)
+    image = Image.open(io.BytesIO(image_data))
+    if image.mode in ('RGBA', 'P', 'LA'):
+        image = image.convert('RGB')
+    if target_size > 0:
+        image.thumbnail((target_size, target_size))
+    return image
+
+
+def decode_base64_to_image_file(base64_string, image_path, target_size=-1):
+    image = decode_base64_to_image(base64_string, target_size=target_size)
+    base_dir = os.path.dirname(image_path)
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir, exist_ok=True)
+    image.save(image_path)

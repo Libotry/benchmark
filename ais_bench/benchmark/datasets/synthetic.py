@@ -10,7 +10,7 @@ from transformers import AutoTokenizer
 
 from datasets import Dataset
 from ais_bench.benchmark.registry import LOAD_DATASET
-from ais_bench.benchmark.utils.logging import get_logger
+from ais_bench.benchmark.utils.logging.logger import AISLogger
 from ais_bench.benchmark.datasets.base import BaseDataset
 
 
@@ -262,7 +262,7 @@ class SyntheticDataset(BaseDataset):
         return valid_indices[rand_indices].to(torch.int64)
 
     def load(self, config, **kwargs):
-        self.logger = get_logger()
+        self.logger = AISLogger()
         dataset = []
         model_path_key = "ModelPath"
         config[model_path_key] = kwargs.get("model_path", None)

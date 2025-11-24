@@ -7,8 +7,11 @@ from datasets import Dataset, DatasetDict
 
 from ais_bench.benchmark.registry import LOAD_DATASET
 from ais_bench.benchmark.datasets.utils.datasets import get_data_path
+from ais_bench.benchmark.utils.logging.logger import AISLogger
 
 from .base import BaseDataset
+
+logger = AISLogger()
 
 
 @LOAD_DATASET.register_module()
@@ -17,6 +20,7 @@ class CEvalDataset(BaseDataset):
     @staticmethod
     def load(path: str, name: str, local_mode: bool = True):
         path = get_data_path(path, local_mode=local_mode)
+        logger.debug(f"Loading C-Eval dataset '{name}' from: {path}")
         dataset = {}
         for split in ['dev', 'val', 'test']:
             filename = osp.join(path, split, f'{name}_{split}.csv')
@@ -28,6 +32,7 @@ class CEvalDataset(BaseDataset):
                     item.setdefault('explanation', '')
                     item.setdefault('answer', '')
                     dataset.setdefault(split, []).append(item)
+        logger.debug(f"C-Eval '{name}' loaded: dev={len(dataset.get('dev', []))}, val={len(dataset.get('val', []))}, test={len(dataset.get('test', []))}")
         dataset = DatasetDict(
             {i: Dataset.from_list(dataset[i])
                 for i in dataset})

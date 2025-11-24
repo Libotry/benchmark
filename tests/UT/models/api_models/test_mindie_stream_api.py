@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 from copy import deepcopy
 
-from ais_bench.benchmark.models.api_models.mindie_stream_api import MindieStreamApi
+from ais_bench.benchmark.models import MindieStreamApi
 from ais_bench.benchmark.utils.prompt import PromptList
 from ais_bench.benchmark.models.output import Output
 

@@ -1316,7 +1316,7 @@ def _update_legend_explanation(
     table_trace.cells.height = row_height
     table_trace.cells.font.size = font_size
 
-    logger.info(f"Added '{trace_name}' to group '{group_prefix}' in legend explanation table")
+    logger.debug(f"Added '{trace_name}' to group '{group_prefix}' in legend explanation table")
 
 
 # public functions
@@ -1335,7 +1335,6 @@ def _export_to_html(fig: go.Figure, output_path: str, save_json: bool = True) ->
                     'responsive': True
                 }
             )
-            logger.info(f"RPS distribution charts saved to {output_path}")
 
             if save_json:
                 filename: str = output_path.replace('.html', '.json')
@@ -1541,6 +1540,5 @@ def _merge_into_subplot(
         except Exception as e:
             logger.error(f"Callback function failed: {str(e)}")
 
-    logger.info(f"Successfully merged chart into position ({row}, {col})")
     return merged_fig
 

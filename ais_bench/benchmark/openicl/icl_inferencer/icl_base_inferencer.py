@@ -17,6 +17,7 @@ from ais_bench.benchmark.utils.core.abbr import model_abbr_from_cfg
 from ais_bench.benchmark.utils.logging.logger import AISLogger
 from ais_bench.benchmark.utils.logging.error_codes import ICLI_CODES
 from ais_bench.benchmark.utils.logging.exceptions import AISBenchImplementationError, ParameterValueError
+from ais_bench.benchmark.models.local_models.base import BaseModel
 
 
 MAX_BATCH_SIZE = 100000
@@ -56,7 +57,7 @@ class BaseInferencer:
         self.logger.debug(f"Output JSON file path: {self.output_json_filepath}")
 
         # construct model and output handler (if needed, can be changed to lazy build)
-        self.model = build_model_from_cfg(model_cfg)
+        self.model: BaseModel = build_model_from_cfg(model_cfg) # type: ignore
         self.output_handler = BaseInferencerOutputHandler()
 
         # identify whether the current process is the main process (avoid covering the method with boolean)
@@ -92,7 +93,7 @@ class BaseInferencer:
             self.logger.debug(f"Output directory {output_dir} does not exist, return empty finish data dict")
             return {}
         tmp_dir = os.path.join(output_dir, "tmp")
-        abbr_finish_data_cache = defaultdict(dict) #
+        
         tmp_finish_data_cache = defaultdict(dict) #
         finish_data_cache = defaultdict(dict)
 
@@ -100,6 +101,8 @@ class BaseInferencer:
             if not finish_data.endswith(".jsonl"):
                 continue
             data_abbr = finish_data.split(".")[0]
+            finish_data_cache[data_abbr] = defaultdict(dict)
+            abbr_finish_data_cache = finish_data_cache[data_abbr]
             
             with open(os.path.join(output_dir, finish_data), "r") as f:
                 for line in f:
@@ -122,10 +125,14 @@ class BaseInferencer:
         to_write = defaultdict(dict)
         for key, value in tmp_finish_data_cache.items():
             data_abbr = value.get("data_abbr")
-            finish_data_cache.setdefault(data_abbr, []).append(value)
+            if data_abbr not in finish_data_cache.keys():
+                finish_data_cache[data_abbr] = defaultdict(dict)
+            cur_abbr_finish_data_cache = finish_data_cache[data_abbr]
             #abbr.json to write
-            if key not in abbr_finish_data_cache.keys():
+            if key not in cur_abbr_finish_data_cache.keys():
                 to_write.setdefault(data_abbr, []).append(json.dumps(value) + "\n")
+            cur_abbr_finish_data_cache[value.get("uuid")] = value
+            
         for data_abbr, lines in to_write.items():
             with open(os.path.join(output_dir, f"{data_abbr}.jsonl"), "a") as f:
                 f.writelines(lines)

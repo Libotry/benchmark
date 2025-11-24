@@ -9,8 +9,13 @@ from ais_bench.benchmark.openicl.icl_evaluator import BaseEvaluator
 from ais_bench.benchmark.registry import (ICL_EVALUATORS, LOAD_DATASET,
                                   TEXT_POSTPROCESSORS)
 from ais_bench.benchmark.datasets.utils.datasets import get_data_path
+from ais_bench.benchmark.utils.logging.logger import AISLogger
+from ais_bench.benchmark.utils.logging.error_codes import DSET_CODES
+from ais_bench.benchmark.utils.logging.exceptions import ParameterValueError, AISBenchDataContentError
 
 from .base import BaseDataset
+
+logger = AISLogger()
 
 
 def last_boxed_only_string(string):
@@ -44,10 +49,14 @@ def last_boxed_only_string(string):
 def remove_boxed(s):
     left = '\\boxed{'
     try:
-        assert s[:len(left)] == left
-        assert s[-1] == '}'
+        if not (s[:len(left)] == left and s[-1] == '}'):
+            raise AISBenchDataContentError(
+                DSET_CODES.DATA_INVALID_STRUCTURE,
+                f"String must start with '{left}' and end with '}}'"
+            )
         return s[len(left):-1]
-    except Exception:
+    except (IndexError, TypeError) as e:
+        logger.debug(f"Failed to remove boxed from string: {e}")
         return None
 
 
@@ -63,7 +72,6 @@ def extract_boxed_answer(pred_str, strip_double_curly_brace=False):
         if match:
             answer = match.group(1)
     return answer
-
 
 def normalize_final_answer(final_answer: str) -> str:
     """Normalize a final answer to a quantitative reasoning question."""
@@ -93,9 +101,14 @@ def normalize_final_answer(final_answer: str) -> str:
     final_answer = re.sub(r'(\\textbf\{)(.*?)(\})', '\\2', final_answer)
     final_answer = re.sub(r'(\\overline\{)(.*?)(\})', '\\2', final_answer)
     final_answer = re.sub(r'(\\boxed\{)(.*)(\})', '\\2', final_answer)
-    assert '\n' not in final_answer
-    assert '\r' not in final_answer
-    assert '\f' not in final_answer
+    
+    # Validate no line breaks in answer
+    if '\n' in final_answer or '\r' in final_answer or '\f' in final_answer:
+        raise AISBenchDataContentError(
+            DSET_CODES.DATA_PREPROCESSING_ERROR,
+            f"Line breaks should have been removed but still present in final answer"
+        )
+    
     if len(re.findall(r'finalansweris(.*)', final_answer)) > 0:
         final_answer = re.findall(r'finalansweris(.*)', final_answer)[-1]
 
@@ -143,6 +156,7 @@ class MATHDataset(BaseDataset):
     @staticmethod
     def load(path: str, file_name: str = 'math.json', **kwargs):
         path = get_data_path(path)
+        logger.debug(f"Loading MATH dataset from: {path}/{file_name}")
         dataset = DatasetDict()
         raw_data = []
 
@@ -158,6 +172,7 @@ class MATHDataset(BaseDataset):
 
         dataset['test'] = Dataset.from_list(raw_data)
         dataset['train'] = Dataset.from_list(raw_data)
+        logger.debug(f"MATH dataset loaded: {len(raw_data)} samples")
         return dataset
 
 
@@ -197,7 +212,11 @@ class MATHEvaluator(BaseEvaluator):
 
     def __init__(self, version='v1'):
         super().__init__()
-        assert version in ['v1', 'v2']
+        if version not in ['v1', 'v2']:
+            raise ParameterValueError(
+                DSET_CODES.INVALID_PARAM_VALUE,
+                f"MATH evaluator version must be 'v1' or 'v2', got '{version}'"
+            )
         self.version = version
 
     def score(self, predictions, references):
@@ -226,9 +245,8 @@ class MATHEvaluator(BaseEvaluator):
                 if len(substr) > 0 and substr[0] == '{':
                     new_str += substr
                 else:
-                    try:
-                        assert len(substr) >= 2
-                    except AssertionError:
+                    if len(substr) < 2:
+                        logger.debug(f"Substring too short to fix fraction: '{substr}'")
                         return string
                     a = substr[0]
                     b = substr[1]
@@ -255,10 +273,13 @@ class MATHEvaluator(BaseEvaluator):
         try:
             a = int(a)
             b = int(b)
-            assert string == '{}/{}'.format(a, b)
+            if string != '{}/{}'.format(a, b):
+                logger.debug(f"String format mismatch when fixing fraction: '{string}'")
+                return string
             new_string = '\\frac{' + str(a) + '}{' + str(b) + '}'
             return new_string
-        except AssertionError:
+        except (ValueError, TypeError) as e:
+            logger.debug(f"Failed to convert fraction to integers: {e}")
             return string
 
     def _remove_right_units(self, string):
@@ -266,7 +287,11 @@ class MATHEvaluator(BaseEvaluator):
         # units
         if '\\text{ ' in string:
             splits = string.split('\\text{ ')
-            assert len(splits) == 2
+            if len(splits) != 2:
+                raise AISBenchDataContentError(
+                    DSET_CODES.DATA_PREPROCESSING_ERROR,
+                    f"Expected exactly 2 splits when removing units but got {len(splits)}"
+                )
             return splits[0]
         else:
             return string
@@ -484,7 +509,8 @@ class MATHEvaluator(BaseEvaluator):
             ss2 = normalize_final_answer(ss2)
             if ss1 == ss2:
                 return True
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to compare answers with strip function: {e}")
             pass
 
         try:
@@ -492,7 +518,8 @@ class MATHEvaluator(BaseEvaluator):
             ss2 = normalize_final_answer(str2)
             if ss1 == ss2:
                 return True
-        except Exception:
+        except Exception as e:
+            logger.debug(f"Failed to normalize and compare answers: {e}")
             pass
 
         return str1 == str2
@@ -516,9 +543,9 @@ class MATHAgentEvaluator(MATHEvaluator):
             soft_pred = step['result']['text']
             if self.is_equiv(soft_pred, refer):
                 return True
-        except Exception:
-            # result might not exists
-            print(pred, soft_pred, refer)
+        except (KeyError, TypeError) as e:
+            # result might not exist
+            logger.debug(f"Failed to extract soft prediction from step: {e}")
         return False
 
     def get_action(self, step):

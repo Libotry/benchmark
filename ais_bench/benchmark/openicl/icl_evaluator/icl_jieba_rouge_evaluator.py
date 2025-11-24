@@ -1,3 +1,7 @@
+import warnings
+
+# Filter out pkg_resources deprecation warning from jieba
+warnings.filterwarnings('ignore', message='.*pkg_resources is deprecated.*', category=UserWarning)
 import jieba
 from rouge_chinese import Rouge
 

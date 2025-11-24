@@ -182,29 +182,33 @@ class HuggingFacewithChatTemplate(BaseModel):
                  stop_words: Optional[str] = [],
                  mode: str = 'none',
                  **other_kwargs):
+        # Calculate actual max_seq_len, get from model config if None
+        actual_max_seq_len = _get_possible_max_seq_len(max_seq_len, path)
         super().__init__(
-            path,
-            max_seq_len,
-            tokenizer_only,
-            meta_template,
-            generation_kwargs,
-            False,
+            path=path,
+            max_seq_len=actual_max_seq_len,
+            tokenizer_only=tokenizer_only,
+            meta_template=meta_template,
+            generation_kwargs=generation_kwargs,
+            sync_rank=False,
         )
-        self.path = path
-        self.tokenizer_only = tokenizer_only
+        # Override template_parser to use APITemplateParser
         self.template_parser = _get_meta_template(meta_template)
-        self.max_seq_len = _get_possible_max_seq_len(max_seq_len, path)
         self.max_out_len = other_kwargs.get('max_out_len', None)
+        self.fastchat_template = fastchat_template
+        self.mode = mode
+        self.tokenizer = None
+        # Initialize performance statistics
+        self.latencies, self.counts, self.timestamps = [], [], []
+        
+        # Load tokenizer and model
         self._load_tokenizer(tokenizer_path or path, tokenizer_kwargs, pad_token_id)
         if not tokenizer_only:
             self._load_model(path=path, kwargs=model_kwargs, peft_path=peft_path, peft_kwargs=peft_kwargs)
-        self.generation_kwargs = generation_kwargs
-        self.fastchat_template = fastchat_template
+        
+        # Set stop_words (needs to be after tokenizer is loaded)
         self.stop_words = list(set(stop_words + self._get_potential_stop_words(path)))
-        assert mode in ['none', 'mid']
-        self.mode = mode
         self.logger.info(f'using stop words: {self.stop_words}')
-        self.latencies, self.counts, self.timestamps = [], [], []
 
     def _load_tokenizer(self, path: Optional[str], kwargs: dict, pad_token_id: Optional[int] = None):
         from transformers import AutoTokenizer, GenerationConfig
@@ -272,6 +276,9 @@ class HuggingFacewithChatTemplate(BaseModel):
     def _get_potential_stop_words(self, path: Optional[str]):
         from transformers import GenerationConfig
         potential_stop_words = []
+        # Return empty list if tokenizer is not loaded yet
+        if self.tokenizer is None:
+            return potential_stop_words
         try:
             generation_config = GenerationConfig.from_pretrained(path)
         except:
@@ -401,25 +408,27 @@ class HuggingFaceBaseModel(HuggingFacewithChatTemplate):
                  drop_middle: bool = False,
                  **other_kwargs):
         super().__init__(
-            path,
-            max_seq_len,
-            tokenizer_only,
-            None,
-            generation_kwargs,
-            False,
+            path=path,
+            model_kwargs=model_kwargs,
+            tokenizer_path=tokenizer_path,
+            tokenizer_kwargs=tokenizer_kwargs,
+            peft_path=peft_path,
+            peft_kwargs=peft_kwargs,
+            tokenizer_only=tokenizer_only,
+            generation_kwargs=generation_kwargs,
+            max_seq_len=max_seq_len,
+            meta_template=None,
+            pad_token_id=pad_token_id,
+            fastchat_template=None,
+            stop_words=[],  # Pass empty list to avoid parent class merging potential stop_words
+            mode='none',
+            **other_kwargs,
         )
-        self.path = path
-        self.tokenizer_only = tokenizer_only
+        # Override template_parser to use LMTemplateParser instead of APITemplateParser
         self.template_parser = LMTemplateParser()
-        self.max_seq_len = _get_possible_max_seq_len(max_seq_len, path)
-        self.max_out_len = other_kwargs.get('max_out_len', None)
-        self.drop_middle = drop_middle
-        self._load_tokenizer(tokenizer_path or path, tokenizer_kwargs, pad_token_id)
-        if not tokenizer_only:
-            self._load_model(path=path, kwargs=model_kwargs, peft_path=peft_path, peft_kwargs=peft_kwargs)
-        self.generation_kwargs = generation_kwargs
+        # Set stop_words without parent class's potential stop_words merging logic
         self.stop_words = stop_words
-        self.latencies, self.counts, self.timestamps = [], [], []
+        self.drop_middle = drop_middle
         self.do_performance = False
 
     def generate(self,

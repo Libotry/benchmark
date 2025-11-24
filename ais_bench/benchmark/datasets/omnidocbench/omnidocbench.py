@@ -69,7 +69,7 @@ def end2end_eval(dataset, metrics_list, pages, save_name, out_dir):
             metric_val = METRIC_REGISTRY.get(metric)
             samples, result_s = metric_val(samples).evaluate(group_info, f"{save_name}_{element}", out_dir)
             if result_s:
-                results[f'[{element}]: {metric}'] = float(result_s[metric]['ALL_page_avg'])
+                results[f'[{element}]: {metric}'] = 100 * float(result_s[metric]['ALL_page_avg'])
                 result.update(result_s)
         result_all[element] = {}
         

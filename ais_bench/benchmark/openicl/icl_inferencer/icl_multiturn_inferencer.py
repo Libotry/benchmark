@@ -4,7 +4,7 @@ from multiprocessing import BoundedSemaphore
 from typing import List, Optional
 import uuid
 import copy
-
+import asyncio
 import aiohttp
 
 from ais_bench.benchmark.models.output import RequestOutput
@@ -81,6 +81,7 @@ class MultiTurnGenInferencer(BaseApiInferencer, BaseLocalInferencer):
         else:
             raise ParameterValueError(ICLI_CODES.MULTITRUN_MODE_OUT_OF_RANGE, 
                                       f"Multiturn dialogue infer model only supports every、last or every_with_gt, but got {self.infer_mode}")
+        await self.status_counter.case_finish()
 
     async def infer_last(self, data: dict, session: aiohttp.ClientSession):
         """Conducts a single inference on the entire multi-turn dialogue at once.
@@ -99,7 +100,7 @@ class MultiTurnGenInferencer(BaseApiInferencer, BaseLocalInferencer):
         start_prompt, chat, end_prompt = chat[:1], chat[1:-1], chat[-1:]
         bot_indices = [i for i, item in enumerate(chat) if item['role'] == 'BOT']
         history = PromptList(chat[:bot_indices[-1]])
-        history = self.model.parse_template(PromptList(start_prompt + history + end_prompt), mode="gen")
+        history = await asyncio.to_thread(self.model.parse_template, PromptList(start_prompt + history + end_prompt), mode="gen")
         turn_id = 0
         output = RequestOutput(self.perf_mode)
         output.turn_id, output.uuid = turn_id, uid
@@ -133,7 +134,8 @@ class MultiTurnGenInferencer(BaseApiInferencer, BaseLocalInferencer):
         bot_indices = [i for i, item in enumerate(chat) if item['role'] == 'BOT']
         turn_id = 0
         for i in bot_indices:
-            history = self.model.parse_template(PromptList(start_prompt + chat[:i] + end_prompt), mode="gen")
+            # TODO: use thread to parse the template
+            history = await asyncio.to_thread(self.model.parse_template, PromptList(start_prompt + chat[:i] + end_prompt), mode="gen")
             output = RequestOutput(self.perf_mode)
             output.turn_id, output.uuid = turn_id, uid
             max_out_len = max_out_len[turn_id] if isinstance(max_out_len, list) else max_out_len
@@ -172,7 +174,7 @@ class MultiTurnGenInferencer(BaseApiInferencer, BaseLocalInferencer):
         bot_indices = [i for i, item in enumerate(chat) if item['role'] == 'BOT']
         turn_id = 0
         for i in bot_indices:
-            history = self.model.parse_template(PromptList(start_prompt + chat[:i] + end_prompt), mode="gen")
+            history = await asyncio.to_thread(self.model.parse_template, PromptList(start_prompt + chat[:i] + end_prompt), mode="gen")
             output = RequestOutput(self.perf_mode)
             output.turn_id, output.uuid = turn_id, uid
             max_out_len = max_out_len[turn_id] if isinstance(max_out_len, list) else max_out_len
@@ -189,7 +191,6 @@ class MultiTurnGenInferencer(BaseApiInferencer, BaseLocalInferencer):
                 await self.status_counter.finish()
                 await self.output_handler.report_cache_info(index, history, output, data_abbr, gold)
                 break
-
 
     def get_data_list(
         self,
@@ -214,7 +215,7 @@ class MultiTurnGenInferencer(BaseApiInferencer, BaseLocalInferencer):
                 ice,
                 gen_field_replace_token=self.gen_field_replace_token,
             )
-            # parsed_prompt = self.model.parse_template(prompt, mode="gen")
+
             prompt_list.append(dialog_prompts)
         gold_ans = retriever.get_gold_ans()
         data_list = []

@@ -56,6 +56,8 @@ class DummyStatusCounter:
         pass
     async def finish(self):
         pass
+    async def case_finish(self):
+        pass
 
 
 class TestGenInferencer(unittest.TestCase):

@@ -6,8 +6,11 @@ from datasets import Dataset, DatasetDict
 
 from ais_bench.benchmark.registry import LOAD_DATASET
 from ais_bench.benchmark.datasets.utils.datasets import get_data_path
+from ais_bench.benchmark.utils.logging.logger import AISLogger
 
 from .base import BaseDataset
+
+logger = AISLogger()
 
 
 @LOAD_DATASET.register_module()
@@ -16,9 +19,11 @@ class ARCDataset(BaseDataset):
     @staticmethod
     def load(path: str, name: str):
         path = get_data_path(path)
+        logger.debug(f"Loading ARC dataset '{name}' from: {path}")
         dataset = DatasetDict()
         for split in ["Dev", "Test"]:
-            with open(osp.join(path, f"{name}-{split}.jsonl"), 'r', errors='ignore') as in_f:
+            filename = osp.join(path, f"{name}-{split}.jsonl")
+            with open(filename, 'r', errors='ignore') as in_f:
                 rows = []
                 for line in in_f:
                     item = json.loads(line.strip())
@@ -36,4 +41,5 @@ class ARCDataset(BaseDataset):
                         'textD': question['choices'][3]['text'],
                     })
             dataset[split] = Dataset.from_list(rows)
+            logger.debug(f"ARC '{name}' split '{split}' loaded: {len(rows)} samples")
         return dataset

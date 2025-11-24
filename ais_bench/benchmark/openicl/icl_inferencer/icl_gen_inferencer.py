@@ -84,6 +84,7 @@ class GenInferencer(BaseApiInferencer, BaseLocalInferencer):
         else:
             await self.status_counter.failed()
         await self.status_counter.finish()
+        await self.status_counter.case_finish()
 
         await self.output_handler.report_cache_info(index, input, output, data_abbr, gold)
 
@@ -128,7 +129,6 @@ class GenInferencer(BaseApiInferencer, BaseLocalInferencer):
         Returns:
             List of data dictionaries for inference
         """
-        # TODO: reuse mode, load tmp results only and infer unprocessed data
         data_abbr = retriever.dataset.abbr
         ice_idx_list = retriever.retrieve()
         prompt_list = []
@@ -160,7 +160,7 @@ class GenInferencer(BaseApiInferencer, BaseLocalInferencer):
         # Dataset-specified max_out_len has highest priority
         max_out_lens = retriever.dataset_reader.get_max_out_len()
         if max_out_lens is not None:
-            self.logger.warning(f"Dataset-specified max_out_len has highest priority, use dataset-specified max_out_len")
+            self.logger.warning("Dataset-specified max_out_len has highest priority, use dataset-specified max_out_len")
             for index, max_out_len in enumerate(max_out_lens):
                 data_list[index]["max_out_len"] = max_out_len if max_out_len else self.model.max_out_len
 

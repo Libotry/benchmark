@@ -51,8 +51,9 @@ class TestHumanEvalEvaluator(unittest.TestCase):
 
     def test_init_import_error(self):
         """测试导入错误"""
+        from ais_bench.benchmark.utils.logging.exceptions import AISBenchImportError
         with patch.dict('sys.modules', {'human_eval': None}):
-            with self.assertRaises(ImportError) as ctx:
+            with self.assertRaises(AISBenchImportError) as ctx:
                 HumanEvalEvaluator()
             self.assertIn('human_eval', str(ctx.exception))
 
@@ -113,8 +114,9 @@ class TestHumanEvalPlusEvaluator(unittest.TestCase):
 
     def test_init_import_error(self):
         """测试导入错误"""
+        from ais_bench.benchmark.utils.logging.exceptions import AISBenchImportError
         with patch.dict('sys.modules', {'evalplus': None}):
-            with self.assertRaises(ImportError) as ctx:
+            with self.assertRaises(AISBenchImportError) as ctx:
                 HumanEvalPlusEvaluator()
             self.assertIn('evalplus', str(ctx.exception))
 

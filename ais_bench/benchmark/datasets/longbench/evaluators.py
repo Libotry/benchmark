@@ -1,9 +1,12 @@
 import difflib
 import re
 import string
+import warnings
 from collections import Counter
 from typing import List
 
+# Filter out pkg_resources deprecation warning from jieba
+warnings.filterwarnings('ignore', message='.*pkg_resources is deprecated.*', category=UserWarning)
 import jieba
 from fuzzywuzzy import fuzz
 from rouge import Rouge

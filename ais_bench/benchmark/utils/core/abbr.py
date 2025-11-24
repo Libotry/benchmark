@@ -38,6 +38,13 @@ def task_abbr_from_cfg(task: Dict) -> str:
         name = f"{task['models'][0]['abbr']}/{task['datasets'][0][0]['abbr']}"
     return name
 
+def merge_dataset_abbr_from_cfg(task: ConfigDict) -> str:
+    """Returns task abbreviation from the task's confg."""
+    if len(task["datasets"][0]) > 1:
+        name = f"{task['datasets'][0][0].get('type').split('.')[-1].lower()}"
+    else:
+        name = f"{task['datasets'][0][0]['abbr']}"
+    return name
 
 def get_infer_output_path(
     model_cfg: ConfigDict,

@@ -5,6 +5,7 @@ from typing import Dict, List, Optional
 
 from mmengine.dist import is_main_process
 
+from ais_bench.benchmark.openicl.icl_prompt_template.icl_prompt_template_base import BasePromptTemplate
 from ais_bench.benchmark.registry import ICL_PROMPT_TEMPLATES
 from ais_bench.benchmark.utils.prompt import PromptList
 from ais_bench.benchmark.utils.logging.logger import AISLogger
@@ -49,11 +50,11 @@ class BaseRetriever:
     ) -> None:
         self.logger = AISLogger()
         self.dataset = dataset
-        self.ice_template = (
+        self.ice_template: Optional[BasePromptTemplate] = (
             None if ice_template is None else ICL_PROMPT_TEMPLATES.build(ice_template)
         )
         self.logger.debug(f"Ice template: {self.ice_template}")
-        self.prompt_template = (
+        self.prompt_template: Optional[BasePromptTemplate] = (
             None
             if prompt_template is None
             else ICL_PROMPT_TEMPLATES.build(prompt_template)

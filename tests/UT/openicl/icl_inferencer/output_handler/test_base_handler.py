@@ -5,10 +5,15 @@ import sqlite3
 import os
 import queue
 import numpy as np
+import functools
+import shutil
 
 from ais_bench.benchmark.openicl.icl_inferencer.output_handler.base_handler import BaseInferencerOutputHandler
 from ais_bench.benchmark.models.output import Output
 from ais_bench.benchmark.utils.logging.exceptions import AISBenchImplementationError, ParameterValueError, FileOperationError
+
+TempDirectory = functools.partial(tempfile.TemporaryDirectory, dir=os.getcwd())
+NamedTempFile = functools.partial(tempfile.NamedTemporaryFile, dir=os.getcwd())
 
 
 class ConcreteOutputHandler(BaseInferencerOutputHandler):
@@ -25,10 +30,10 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
         self.assertTrue(handler.all_success)
 
     def test_get_result_abstract(self):
-        """测试抽象方法get_result未实现时抛出异常"""
+        """测试抽象方法get_prediction_result未实现时抛出异常"""
         handler = BaseInferencerOutputHandler()
         with self.assertRaises(AISBenchImplementationError):
-            handler.get_result(None, "input", "output")
+            handler.get_prediction_result("output", gold=None, input="test_input")
 
     def test_write_to_json_invalid_save_dir(self):
         """测试write_to_json在无效保存目录时抛出异常"""
@@ -42,8 +47,7 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
         """测试write_to_json成功写入JSON文件"""
         handler = ConcreteOutputHandler()
         handler.results_dict["test"] = {"uid1": {"id": 0, "result": "test1"}}
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with TempDirectory() as tmpdir:
             handler.write_to_json(tmpdir, False)
             file_path = os.path.join(tmpdir, "test.jsonl")
             self.assertTrue(os.path.exists(file_path))
@@ -52,8 +56,7 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
         """测试write_to_json在results_dict为空时不创建文件"""
         handler = ConcreteOutputHandler()
         handler.results_dict["test"] = {}
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with TempDirectory() as tmpdir:
             handler.write_to_json(tmpdir, False)
             file_path = os.path.join(tmpdir, "test.jsonl")
             self.assertFalse(os.path.exists(file_path))
@@ -64,7 +67,7 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
         handler.results_dict["test"] = {"uid1": {"id": 0, "result": "test1"}}
         
         with mock.patch('pathlib.Path.mkdir', side_effect=OSError("Permission denied")):
-            with tempfile.TemporaryDirectory() as tmpdir:
+            with TempDirectory() as tmpdir:
                 with self.assertRaises(FileOperationError):
                     handler.write_to_json(tmpdir, False)
 
@@ -72,8 +75,7 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
         """测试write_to_json在perf_mode=True时写入详细信息文件"""
         handler = ConcreteOutputHandler()
         handler.results_dict["test"] = {"uid1": {"id": 0, "result": "test1"}}
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
+        with TempDirectory() as tmpdir:
             handler.write_to_json(tmpdir, True)
             file_path = os.path.join(tmpdir, "test_details.jsonl")
             self.assertTrue(os.path.exists(file_path))
@@ -134,7 +136,7 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
         from ais_bench.benchmark.openicl.icl_inferencer.output_handler.db_utils import init_db
         
         handler = ConcreteOutputHandler()
-        with tempfile.NamedTemporaryFile(suffix='.db', delete=False) as tmp:
+        with NamedTempFile(suffix='.db', delete=False) as tmp:
             db_path = tmp.name
         
         try:
@@ -217,8 +219,8 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
         """测试run_cache_consumer基本功能，从队列读取并处理缓存信息"""
         handler = ConcreteOutputHandler(save_every=2)
         handler.all_success = False
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
+
+        with TempDirectory() as tmpdir:
             handler.cache_queue.sync_q.put((0, "test", "input1", "output1", "gold1"))
             handler.cache_queue.sync_q.put((1, "test", "input2", "output2", "gold2"))
             handler.cache_queue.sync_q.put(None)
@@ -234,8 +236,8 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
     def test_run_cache_consumer_perf_mode(self):
         """测试run_cache_consumer在perf_mode=True时将数据库文件移动到db_data目录"""
         handler = ConcreteOutputHandler(save_every=1)
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
+
+        with TempDirectory() as tmpdir:
             handler.cache_queue.sync_q.put((0, "test", "input1", "output1", "gold1"))
             handler.cache_queue.sync_q.put(None)
             
@@ -248,13 +250,18 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
             if os.path.exists(db_data_dir):
                 db_files = [f for f in os.listdir(db_data_dir) if f.endswith('.db')]
                 self.assertGreaterEqual(len(db_files), 0)
+                # Clean up: remove db_data directory and its contents after test
+                try:
+                    shutil.rmtree(db_data_dir)
+                except Exception:
+                    pass
 
     def test_run_cache_consumer_all_success_cleanup(self):
         """测试run_cache_consumer在all_success=True时删除输出文件"""
         handler = ConcreteOutputHandler(save_every=1)
         handler.all_success = True
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
+
+        with TempDirectory() as tmpdir:
             handler.cache_queue.sync_q.put((0, "test", "input1", "output1", "gold1"))
             handler.cache_queue.sync_q.put(None)
             
@@ -270,8 +277,8 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
         """测试run_cache_consumer批量写入功能"""
         handler = ConcreteOutputHandler(save_every=2)
         handler.all_success = False
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
+
+        with TempDirectory() as tmpdir:
             handler.cache_queue.sync_q.put((0, "test", "input1", "output1", "gold1"))
             handler.cache_queue.sync_q.put((1, "test", "input2", "output2", "gold2"))
             handler.cache_queue.sync_q.put((2, "test", "input3", "output3", "gold3"))
@@ -292,8 +299,8 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
         """测试run_cache_consumer在发生异常时的异常处理"""
         handler = ConcreteOutputHandler(save_every=1)
         handler.all_success = False
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
+
+        with TempDirectory() as tmpdir:
             handler.cache_queue.sync_q.put((0, "test", "input1", "output1", "gold1"))
             handler.cache_queue.sync_q.put(None)
             
@@ -308,8 +315,8 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
         """测试run_cache_consumer在perf_mode下将数据库文件移动到db_data目录"""
         handler = ConcreteOutputHandler(save_every=1)
         handler.all_success = True
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
+
+        with TempDirectory() as tmpdir:
             handler.cache_queue.sync_q.put((0, "test", "input1", "output1", "gold1"))
             handler.cache_queue.sync_q.put(None)
             
@@ -322,13 +329,18 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
             db_data_dir = os.path.join(os.path.dirname(tmpdir), "db_data")
             if os.path.exists(db_data_dir):
                 self.assertFalse(os.path.exists(db_path))
+                # Clean up: remove db_data directory and its contents after test
+                try:
+                    shutil.rmtree(db_data_dir)
+                except Exception:
+                    pass
 
     def test_run_cache_consumer_accuracy_mode_db_cleanup(self):
         """测试run_cache_consumer在accuracy模式下删除数据库文件"""
         handler = ConcreteOutputHandler(save_every=1)
         handler.all_success = True
-        
-        with tempfile.TemporaryDirectory() as tmpdir:
+
+        with TempDirectory() as tmpdir:
             handler.cache_queue.sync_q.put((0, "test", "input1", "output1", "gold1"))
             handler.cache_queue.sync_q.put(None)
             
@@ -339,6 +351,14 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
             
             db_path = os.path.join(tmpdir, "test.db")
             self.assertFalse(os.path.exists(db_path))
+            
+            # Clean up: remove db_data directory if it was created
+            db_data_dir = os.path.join(os.path.dirname(tmpdir), "db_data")
+            if os.path.exists(db_data_dir):
+                try:
+                    shutil.rmtree(db_data_dir)
+                except Exception:
+                    pass
 
     def test_stop_cache_consumer(self):
         """测试stop_cache_consumer方法向队列发送停止信号"""

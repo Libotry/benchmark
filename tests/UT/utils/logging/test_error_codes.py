@@ -95,12 +95,12 @@ class TestBaseErrorCode(unittest.TestCase):
         # 测试代码大于等于100的情况
         error_code_triple = BaseErrorCode("UTILS-CFG-123", ErrorModule.UTILS, ErrorType.CONFIG, 123, "test")
         self.assertEqual(error_code_triple.full_code, "UTILS-CFG-123")
-
+        
     def test_invalid_code_name(self):
         """测试code_name与full_code不匹配时抛出ValueError"""
         with self.assertRaises(ValueError) as context:
             BaseErrorCode("INVALID-CODE", ErrorModule.UTILS, ErrorType.CONFIG, 1, "test")
-
+        
         self.assertIn("code_name INVALID-CODE is not equal to full_code UTILS-CFG-001", str(context.exception))
 
 

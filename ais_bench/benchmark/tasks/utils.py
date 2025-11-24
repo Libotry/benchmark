@@ -1,10 +1,11 @@
+import os
 import time
 import struct
 from collections import OrderedDict
 from typing import Dict, List
 from multiprocessing import Event, shared_memory, BoundedSemaphore
-import numpy as np
 
+import numpy as np
 import psutil
 from tqdm import tqdm
 from mmengine.config import ConfigDict
@@ -12,50 +13,27 @@ from mmengine.config import ConfigDict
 from ais_bench.benchmark.tasks.base import TaskStateManager
 from ais_bench.benchmark.utils.logging import AISLogger
 from ais_bench.benchmark.utils.logging.error_codes import TINFER_CODES
-from ais_bench.benchmark.utils.logging.exceptions import ParameterValueError, AISBenchRuntimeError
-from ais_bench.benchmark.utils.config.message_constants import STATUS_REPORT_INTERVAL, MESSAGE_INFO, WAIT_FLAG, SYNC_MAIN_PROCESS_INTERVAL
+from ais_bench.benchmark.utils.logging.exceptions import (
+    ParameterValueError,
+    AISBenchRuntimeError,
+)
+from ais_bench.benchmark.utils.config.message_constants import (
+    STATUS_REPORT_INTERVAL,
+    MESSAGE_INFO,
+    WAIT_FLAG,
+    SYNC_MAIN_PROCESS_INTERVAL,
+    MESSAGE_SIZE,
+    FMT,
+)
+from ais_bench.benchmark.utils.visualization.rps_distribution_plot import plot_rps_distribution
 
 MAX_VIRTUAL_MEMORY_USAGE_PERCENT = 80
 INDEX_READ_FLAG = -1
-# Message queue format for communication with subprocesses: 6 integers.
-# The 6 integers represent status, post, recv, fail, finish, and data_index respectively.
-# Using signed integers to support -1 for data_index
-FMT = "6I1i"
-MESSAGE_SIZE = struct.calcsize(FMT)
+
+FINAL_RPS_MINIMUM_THRESHOLD = 0.1  # minimum acceptable RPS
+MIN_RELIABLE_INTERVAL = 0.001  # minimum reliable time interval (1 millisecond)
 
 logger = AISLogger()
-
-
-class _MessageInfo:
-    STATUS = None
-    POST = None
-    RECV = None
-    FAIL = None
-    FINISH = None
-    DATA_SYNC_FLAG = None
-    DATA_INDEX = None
-
-
-MESSAGE_INFO = _MessageInfo()
-
-FIELDS = OrderedDict(
-    [
-        ("STATUS", "I"),
-        ("POST", "I"),
-        ("RECV", "I"),
-        ("FAIL", "I"),
-        ("FINISH", "I"),
-        ("DATA_SYNC_FLAG", "I"),
-        ("DATA_INDEX", "i"),
-    ]
-)
-
-
-offset = 0
-for name, fmt in FIELDS.items():
-    size = struct.calcsize(fmt)
-    setattr(MESSAGE_INFO, name, (offset, offset + size))
-    offset += size
 
 
 def update_global_data_index(
@@ -118,7 +96,7 @@ def create_message_share_memory():
     shm = shared_memory.SharedMemory(create=True, size=MESSAGE_SIZE)
     buf = shm.buf
     # Set flag to 2, indicating child process is ready for first batch data deserialization
-    buf[:] = struct.pack(FMT, 0, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
+    buf[:] = struct.pack(FMT, 0, 0, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
     return shm
 
 
@@ -202,8 +180,8 @@ class ProgressBar:
         self.refresh_interval = refresh_interval
 
         self.per_pid_stats: Dict[int, Dict[str, int]] = {}
-        self.stats = {"post": 0, "recv": 0, "fail": 0, "finish": 0}
-        self._keys = ("post", "recv", "fail", "finish")
+        self.stats = {"post": 0, "recv": 0, "fail": 0, "finish": 0, "case_finish": 0}
+        self._keys = ("post", "recv", "fail", "finish", "case_finish")
 
         self.start_time = time.perf_counter()
         self._last_snapshot_time = self.start_time
@@ -228,12 +206,13 @@ class ProgressBar:
         # Iterate over a snapshot of keys to allow external mapping mutations
         for pid, shm in self.per_pid_shms.items():
             raw = bytes(shm.buf[:MESSAGE_SIZE])
-            _, post, recv, fail, finish, _, _ = struct.unpack(FMT, raw)
+            _, post, recv, fail, finish, case_finish, _, _ = struct.unpack(FMT, raw)
             normalized = {
                 "post": max(0, int(post)),
                 "recv": max(0, int(recv)),
                 "fail": max(0, int(fail)),
                 "finish": max(0, int(finish)),
+                "case_finish": max(0, int(case_finish)),
             }
             prev = self.per_pid_stats.get(pid)
             if prev != normalized:
@@ -263,19 +242,6 @@ class ProgressBar:
         self._last_snapshot_stats = self.stats.copy()
         return rates
 
-    def _format_per_pid_brief(self) -> str:
-        """Format per-pid statistics into a brief string."""
-        items = []
-        for pid, st in sorted(self.per_pid_stats.items()):
-            finish = st.get("finish", 0)
-            post = st.get("post", 0)
-            recv = st.get("recv", 0)
-            fail = st.get("fail", 0)
-            items.append(f"{pid}:{finish}/{post}/{recv}/{fail}")
-        if not items:
-            return "<no workers>"
-        return " | ".join(items)
-
     # ---------- normal: two-line fixed display ----------
     def _draw_progress(self):
         """Draw progress bar with statistics."""
@@ -289,7 +255,7 @@ class ProgressBar:
             )
         else:
             total = self.total_data_num
-            unit = "req"
+            unit = "case"
             self.logger.info(
                 f"Starting progress bar Total data num: {total}"
                 f" Finished data num: {self.finish_data_num}"
@@ -301,7 +267,7 @@ class ProgressBar:
                 return min(int(time.perf_counter() - start_time), total)
             else:
                 return min(
-                    int(self.stats.get("finish", 0) + self.finish_data_num),
+                    int(self.stats.get("case_finish", 0) + self.finish_data_num),
                     self.total_data_num,
                 )
 
@@ -314,7 +280,7 @@ class ProgressBar:
         try:
             start_time = time.perf_counter()
             initial = min(
-                int(self.stats.get("finish", 0) or self.stats.get("post", 0)),
+                int(self.stats.get("case_finish", 0) or self.stats.get("post", 0)),
                 total,
             )
             if initial > 0 and not self.pressure:
@@ -391,7 +357,7 @@ class ProgressBar:
                 state = {
                     "status": "inferencing",
                     "finish_count": (
-                        self.stats["finish"] + self.finish_data_num
+                        self.stats["case_finish"] + self.finish_data_num
                         if not self.pressure
                         else min(
                             self.pressure_time, int(time.perf_counter() - start_time)
@@ -414,7 +380,7 @@ class ProgressBar:
         state = {
             "status": "write cache",
             "finish_count": (
-                self.stats["finish"] + self.finish_data_num
+                self.stats["case_finish"] + self.finish_data_num
                 if not self.pressure
                 else min(self.pressure_time, int(time.perf_counter() - start_time))
             ),
@@ -435,9 +401,7 @@ class ProgressBar:
         """
         self.logger.debug(f"Set all message status to {flag}")
         for _, shm in self.per_pid_shms.items():
-            shm.buf[:MESSAGE_SIZE] = struct.pack(
-                FMT, flag, 0, 0, 0, 0, 0, INDEX_READ_FLAG
-            )
+            shm.buf[MESSAGE_INFO.STATUS[0]:MESSAGE_INFO.STATUS[1]] = struct.pack("I", flag)
 
     def display(self, task_state_manager: TaskStateManager):
         """Display progress monitoring.
@@ -462,10 +426,11 @@ class TokenProducer:
 
     def __init__(
         self,
-        request_rate: int,
+        request_rate: float,
         traffic_cfg: ConfigDict,
         request_num: int = None,
-        pressure_mode: bool = False,
+        mode: str = "infer",
+        work_dir: str = os.getcwd(),
     ):
         """
         Args:
@@ -474,14 +439,16 @@ class TokenProducer:
             request_num: Total number of requests to schedule when known.
             pressure_mode: If True, after generating the first `request_num` tokens
                 (used to warm up connections), subsequent tokens are produced without sleep.
+            work_dir: Working directory for saving RPS distribution plot.
         """
         self.logger = AISLogger()
         self.request_rate = request_rate
-        self.pressure_mode = pressure_mode
+        self.pressure_mode = mode == "pressure"
+        self.perf_mode = self.pressure_mode or mode == "perf"
         self.burstiness = 1.0
+        self.work_dir = work_dir
         # When request_rate < 0.1, treat as infinite (no pacing applied here)
-        if self.request_rate < 0.1:
-            self.request_rate = float("inf")
+        if self.request_rate < FINAL_RPS_MINIMUM_THRESHOLD:
             self.token_bucket = None
         else:
             self.token_bucket = BoundedSemaphore(request_num + 1)
@@ -503,7 +470,6 @@ class TokenProducer:
                 f"RPS from {ramp_up_start_rps} to {ramp_up_end_rps} RPS over "
                 "the duration of the benchmark."
             )
-            # TODO check traffic_cfg
         else:
             self.logger.info(
                 f"Traffic request rate: {request_rate} RPS with burstiness {self.burstiness}."
@@ -521,66 +487,161 @@ class TokenProducer:
         request_num: int,
         burstiness: float,
         ramp_up_strategy: str,
-        ramp_up_start_rps: int,
-        ramp_up_end_rps: int,
+        ramp_up_start_rps: float,
+        ramp_up_end_rps: float,
     ):
-        """Generate interval lists for request pacing.
-
-        Args:
-            request_num: Total number of requests
-            burstiness: Burstiness factor for request distribution
-            ramp_up_strategy: Strategy for ramping up requests (linear/exponential)
-            ramp_up_start_rps: Starting RPS for ramp-up
-            ramp_up_end_rps: Ending RPS for ramp-up
+        """Generate interval lists for request pacing and optionally draw distribution.
 
         Returns:
-            List of sleep intervals for request pacing
+            List[float]: cumulative sleep intervals (seconds) for each request
         """
-        # Precompute delays among requests to minimize request send lag
+
+        # Defensive checks
+        if request_num <= 0:
+            return []
+
+        # Precompute delays and keep request rates per request for diagnostics
         delay_ts = []
+        request_rates = []
+
         for request_index in range(request_num):
             progress = request_index / max(request_num - 1, 1)
+
+            # Determine current request rate according to ramp strategy
             if ramp_up_strategy == "linear":
                 increase = (ramp_up_end_rps - ramp_up_start_rps) * progress
                 current_request_rate = ramp_up_start_rps + increase
-            elif ramp_up_strategy == "exponential":  # exponential
-                ratio = ramp_up_end_rps / ramp_up_start_rps
-                current_request_rate = ramp_up_start_rps * (ratio**progress)
+            elif ramp_up_strategy == "exponential":
+                # handle degenerate case where start is zero or negative
+                if ramp_up_start_rps <= 0:
+                    current_request_rate = ramp_up_end_rps
+                else:
+                    ratio = ramp_up_end_rps / ramp_up_start_rps
+                    current_request_rate = ramp_up_start_rps * (ratio**progress)
             else:
+                # treat falsy ramp_up_strategy as "no ramp" (use fixed request rate)
                 if not ramp_up_strategy:
-                    current_request_rate = self.request_rate
+                    current_request_rate = float(self.request_rate)
                 else:
                     raise ParameterValueError(
                         TINFER_CODES.INVALID_RAMP_UP_STRATEGY,
                         f"Invalid ramp_up_strategy: {ramp_up_strategy} only support 'linear' and 'exponential'",
                     )
-            if current_request_rate == float("inf"):
-                delay_ts.append(0)
+
+            # sanitize current_request_rate
+            if current_request_rate is None or current_request_rate < 1e-9:
+                # zero or negative rate -> zero interval (send immediately)
+                request_rates.append(0.0)
+                delay_ts.append(0.0)
+                continue
+
+            request_rates.append(float(current_request_rate))
+
+            # Sample the request interval according to burstiness
+            if burstiness == 0:
+                # deterministic fixed interval
+                interval = 1.0 / current_request_rate
             else:
+                # Gamma(shape=k, scale=θ) where θ = 1/(λ·k)
                 theta = 1.0 / (current_request_rate * burstiness)
+                # guard against invalid theta (shouldn't happen if current_request_rate>0 and burstiness>0)
+                if theta <= 0 or not np.isfinite(theta):
+                    interval = 1.0 / current_request_rate
+                else:
+                    interval = float(np.random.gamma(shape=burstiness, scale=theta))
+            delay_ts.append(interval)
 
-                # Sample the request interval from the gamma distribution
-                # If burstiness is 1, it follows exponential distribution
-                delay_ts.append(np.random.gamma(shape=burstiness, scale=theta))
+        # Convert to cumulative delays (time from first request)
+        if len(delay_ts) == 0:
+            return []
 
-        # Calculate the cumulative delay time from the first sent requests
+        # cumulative in-place
         for i in range(1, len(delay_ts)):
             delay_ts[i] += delay_ts[i - 1]
-        if ramp_up_strategy is None and delay_ts[-1] != 0:
-            # When ramp_up_strategy is not set, assume fixed request rate
-            # and scale delay time to align with target_total_delay_s
-            #
-            # NOTE: Accumulating random delta values from gamma distribution
-            # would have 1-2% gap from target_total_delay_s. This logic
-            # closes the gap to stabilize throughput data across different seeds
-            self.logger.debug(
-                f"Ramp-up strategy is not set, "
-                f"assume fixed request rate and scale delay to "
-                f"time to align with target request time: {request_num / self.request_rate} seconds"
-            )
-            target_total_delay_s = request_num / self.request_rate
+
+        # If no ramp-up strategy: normalize to match target total time (stabilize throughput)
+        if not ramp_up_strategy and delay_ts[-1] != 0 and float(self.request_rate) > 0:
+            target_total_delay_s = request_num / float(self.request_rate)
             normalize_factor = target_total_delay_s / delay_ts[-1]
-            delay_ts = [delay * normalize_factor for delay in delay_ts]
+            # scale in place
+            delay_ts = [d * normalize_factor for d in delay_ts]
+
+        # If final RPS (either fixed or ramp end) is extremely low -> treat as simultaneous sends
+        rate_to_check = ramp_up_end_rps if ramp_up_strategy else float(self.request_rate)
+        if rate_to_check < FINAL_RPS_MINIMUM_THRESHOLD:
+            self.logger.info(
+                f"Request rate ({float(self.request_rate)}) or ramp end rps ({ramp_up_end_rps}) "
+                f"< {FINAL_RPS_MINIMUM_THRESHOLD}, sending all requests simultaneously"
+            )
+            return []
+
+        # ---------- Diagnostics: detect timing anomalies & burstiness anomalies ----------
+        try:
+            delays = np.array(delay_ts)
+            # compute per-request inter-arrival times from cumulative deltas:
+            inter_arrivals = np.empty(len(delays), dtype=float)
+            inter_arrivals[0] = delays[0]
+            inter_arrivals[1:] = delays[1:] - delays[:-1]
+
+            request_rates_arr = np.array(request_rates, dtype=float)
+            non_zero_mask = request_rates_arr > 0
+
+            # expected intervals (without burstiness)
+            expected_intervals = np.zeros_like(request_rates_arr)
+            expected_intervals[non_zero_mask] = 1.0 / request_rates_arr[non_zero_mask]
+
+            # timing anomalies: intervals below MIN_RELIABLE_INTERVAL
+            timing_anomaly_mask = inter_arrivals < MIN_RELIABLE_INTERVAL
+            timing_anomaly_indices = np.where(timing_anomaly_mask)[0]
+
+            # interval deviations
+            interval_deviations = np.zeros_like(inter_arrivals)
+            interval_deviations[non_zero_mask] = np.abs(inter_arrivals[non_zero_mask] - expected_intervals[non_zero_mask]) / expected_intervals[non_zero_mask]
+
+            # burstiness anomalies: deviation > 50%
+            burstiness_anomaly_mask = interval_deviations > 0.5
+            burstiness_anomaly_indices = np.where(burstiness_anomaly_mask)[0]
+
+            # remove duplicates (timing anomalies take precedence)
+            if timing_anomaly_indices.size > 0 and burstiness_anomaly_indices.size > 0:
+                timing_set = set(timing_anomaly_indices.tolist())
+                burst_set = set(burstiness_anomaly_indices.tolist())
+                burst_set = burst_set - timing_set
+                burstiness_anomaly_indices = np.array(sorted(list(burst_set)), dtype=np.int64)
+
+            # If burstiness == 0, clear burstiness anomalies
+            if burstiness == 0:
+                burstiness_anomaly_indices = np.array([], dtype=np.int64)
+
+        except Exception as e:
+            self.logger.warning(f"Error during diagnostics calculation: {e}")
+            timing_anomaly_indices = np.array([], dtype=np.int64)
+            burstiness_anomaly_indices = np.array([], dtype=np.int64)
+            inter_arrivals = np.array(delay_ts)
+
+        # ---------- Visualization (only when performance flag enabled) ----------
+        if  len(delay_ts) > 0 and self.perf_mode:
+            self.logger.info("Begin to draw RPS distribution plot...")
+            # build output path (keep existing behavior: append suffix if necessary)
+            model_path = os.path.dirname(self.work_dir)
+            os.makedirs(model_path, exist_ok=True)
+            rps_plot_path = self.work_dir + "_rps_distribution_plot.html"
+
+            # plot_rps_distribution expects cumulative_delays and anomaly indices
+            plot_rps_distribution(
+                cumulative_delays=np.array(delay_ts),
+                timing_anomaly_indices=timing_anomaly_indices,
+                burstiness_anomaly_indices=burstiness_anomaly_indices,
+                request_rate=float(self.request_rate),
+                burstiness=burstiness,
+                ramp_up_strategy=ramp_up_strategy,
+                ramp_up_start_rps=ramp_up_start_rps,
+                ramp_up_end_rps=ramp_up_end_rps,
+                output_path=rps_plot_path,
+            )
+            self.logger.info(f"RPS distribution charts saved to {rps_plot_path}")
+
+
         return delay_ts
 
     def produce_token(self, stop_evt: Event, per_pid_shms: Dict[int, shared_memory.SharedMemory]):

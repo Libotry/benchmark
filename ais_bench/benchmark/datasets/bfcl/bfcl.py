@@ -11,7 +11,7 @@ from ..base import BaseDataset
 from ais_bench.benchmark.openicl.icl_evaluator import BaseEvaluator
 from ais_bench.benchmark.registry import ICL_EVALUATORS, LOAD_DATASET
 from ais_bench.benchmark.datasets.utils.datasets import get_data_path
-from ais_bench.benchmark.utils.logging import get_logger
+from ais_bench.benchmark.utils.logging.logger import AISLogger
 
 
 # Version prefix for BFCL dataset files
@@ -70,7 +70,7 @@ class BFCLDataset(BaseDataset):
             ImportError: If required BFCL dependencies are not installed
             ValueError: If dataset and ground truth have mismatched lengths or IDs
         """
-        logger = get_logger()
+        logger = AISLogger()
         
         # Check if BFCL dependencies are installed
         if not BFCL_INSTALLED:
@@ -257,17 +257,9 @@ class BFCLRelevanceEvaluator(BFCLEvaluator):
         details = []
         correct_count = 0
         
-        for i in range(len(predictions)):
+        for i, prediction in enumerate(predictions):
             index: str = test_set[i]["id"]
-            
-            # Parse model result based on model type
-            if self.is_fc_model:
-                try:
-                    model_result_item = json.loads(predictions[i])
-                except json.JSONDecodeError:
-                    model_result_item = predictions[i]
-            else:
-                model_result_item = predictions[i]
+            model_result_item = prediction
                 
             contain_func_call = False
             decoded_result = None
@@ -382,10 +374,7 @@ class BFCLMultiTurnEvaluator(BFCLEvaluator):
             index: str = test_set[i]["id"]
             
             # Model result is stored as a list of list of model responses. Each inner list represents a turn.
-            try:
-                multi_turn_model_result_list: list[list] = json.loads(predictions[i])
-            except json.JSONDecodeError:
-                multi_turn_model_result_list: list[list] = []
+            multi_turn_model_result_list: list[list] = predictions[i]
                 
             multi_turn_ground_truth_list: list[list[str]] = json.loads(references[i])
             test_entry: dict = test_set[i]
@@ -415,6 +404,7 @@ class BFCLMultiTurnEvaluator(BFCLEvaluator):
                         "possible_answer": multi_turn_ground_truth_list,
                     }
                 )
+                continue  # Skip further processing if format is invalid
                 
             # Check if force-terminated during inference phase.
             # This happens when the model has retried too many times and still haven't figured out the answer.
@@ -525,15 +515,7 @@ class BFCLSingleTurnEvaluator(BFCLEvaluator):
         
         for i in range(len(predictions)):
             index: str = test_set[i]["id"]
-            
-            # Parse model result based on model type
-            if self.is_fc_model:
-                try:
-                    model_result_item = json.loads(predictions[i])
-                except json.JSONDecodeError:
-                    model_result_item = predictions[i]
-            else:
-                model_result_item = predictions[i]
+            model_result_item = predictions[i]
                 
             # Parse function prompt and possible answer
             prompt_item = json.loads(test_set[i]["function"])

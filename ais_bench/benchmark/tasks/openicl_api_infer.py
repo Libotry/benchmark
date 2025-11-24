@@ -22,7 +22,7 @@ from ais_bench.benchmark.tasks.utils import (
     TokenProducer,
 )
 from ais_bench.benchmark.openicl.icl_inferencer.icl_base_api_inferencer import BaseApiInferencer
-from ais_bench.benchmark.utils.core.abbr import task_abbr_from_cfg
+from ais_bench.benchmark.utils.core.abbr import task_abbr_from_cfg, merge_dataset_abbr_from_cfg
 from ais_bench.benchmark.utils.config import build_dataset_from_cfg
 from ais_bench.benchmark.utils.logging.error_codes import TINFER_CODES
 from ais_bench.benchmark.utils.logging.exceptions import ParameterValueError
@@ -83,12 +83,11 @@ class OpenICLApiInferTask(BaseTask):
         self.pressure = self.cli_args.get("pressure", False)
         self.pressure_time = self.cli_args.get("pressure_time")
         self.warmup_size = self.cli_args.get("num_warmups", 1)
+        self.task_mode = self.cli_args.get("mode", "infer") if not self.pressure else "pressure"
         self.inferencer_cfg = self.dataset_cfgs[0]["infer_cfg"]["inferencer"]
         self.inferencer_cfg["model_cfg"] = self.model_cfg
         self.inferencer_cfg["pressure_time"] = self.pressure_time
-        self.inferencer_cfg["mode"] = (
-            self.cli_args.get("mode", "infer") if not self.pressure else "pressure"
-        )
+        self.inferencer_cfg["mode"] = self.task_mode
         self.inferencer_cfg["batch_size"] = self.model_cfg.get("batch_size", 1)
         self.inferencer_cfg["output_json_filepath"] = self.work_dir
         self.logger.debug(f"Inferencer config: {self.inferencer_cfg}")
@@ -156,7 +155,7 @@ class OpenICLApiInferTask(BaseTask):
             infer_data_list = self.inferencer.get_data_list(retriever)
             # get all data_list and data_indexes to infer
             cur_data_indexes = [x for x in range(len(infer_data_list)) for _ in range(self.repeat)]
-            cur_finish_indexes = [x["id"] for x in cur_data_cache]
+            cur_finish_indexes = [x["id"] for x in cur_data_cache.values()]
             for i in cur_finish_indexes:
                 cur_data_indexes.remove(i)
             finish_index_nums += len(cur_finish_indexes)
@@ -361,7 +360,8 @@ class OpenICLApiInferTask(BaseTask):
             self.model_cfg.pop("request_rate", 0),
             self.model_cfg.pop("traffic_cfg", {}),
             request_num,
-            self.pressure,
+            self.task_mode,
+            os.path.join(self.inferencer.get_output_dir(self.work_dir), merge_dataset_abbr_from_cfg(self.cfg)),
         )
         message_shms = {}
         # Message queue collecting per-process request state; polled periodically

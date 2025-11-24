@@ -817,7 +817,7 @@ def is_all_l(spec: str) -> bool:
     return bool(spec) and len(spec) == 1 and spec in {'l', 'c', 'r'}
 
 def split_gt_equation_arrays(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
+    r"""
     Split GT dictionary entries with \ \ begin {array}... \ \ end {array}.
         -Only applicable to category_type=='Equation_isolvated 'and latex containing an array.
         -Extract a new entry for each line of formula:
@@ -875,11 +875,11 @@ def sort_by_position_skip_inline(items: List[Dict[str, Any]]) -> List[Dict[str, 
     )
 
 def _wrap(line: str) -> str:
-    """Re package single line formula \ \ [... \ \]"""
+    r"""Re package single line formula \ \ [... \ \]"""
     return f"\\[{line.strip()}\\]"
 
 def split_equation_arrays(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
+    r"""
     Processing entries with category_type=='Equation_isolvated 'and containing \ \ begin {array}...:
     *Split multi line formula
     *Repackaging content
@@ -1636,7 +1636,7 @@ def match_gt2pred_quick(gt_items, pred_items, line_type, img_name):
         #  Multi line formula splicing modification
         if entry['gt_category_type'] == 'equation_isolated' and len(entry['gt_idx']) > 1:
             mutli_formula  = ' \\\\ '.join(['{'+no_ignores_ori_gt_lines[_].strip('$$').strip('\n')+'}' for _ in  entry['gt_idx']]) if entry['gt_idx'] != [""] else ""
-            mutli_formula = '\\begin{array}{l} ' + mutli_formula + ' \end{array}'
+            mutli_formula = '\\begin{array}{l} ' + mutli_formula + ' \\end{array}'
             entry['gt'] = mutli_formula
         else:
             entry['gt'] = ''.join([no_ignores_ori_gt_lines[_] for _ in entry['gt_idx']]) if entry['gt_idx'] != [""] else ""
@@ -1648,7 +1648,7 @@ def match_gt2pred_quick(gt_items, pred_items, line_type, img_name):
         #  Multi line formula splicing modification pred
         if 'equation' in entry['pred_category_type'] and len(entry['pred_idx']) > 1:
             mutli_formula  = ' \\\\ '.join(['{'+no_ignores_ori_pred_lines[_].strip('$$').strip('\n')+'}' for _ in  entry['pred_idx']]) if entry['pred_idx'] != [""] else ""
-            mutli_formula = '\\begin{array}{l} ' + mutli_formula + ' \end{array}'
+            mutli_formula = '\\begin{array}{l} ' + mutli_formula + ' \\end{array}'
             entry['pred'] = mutli_formula
         else:
             entry['pred'] = ''.join([no_ignores_ori_pred_lines[_] for _ in entry['pred_idx']]) if entry['pred_idx'] != [""] else ""
@@ -1767,7 +1767,7 @@ def normalized_latex_table(text):
         SPECIAL_STRINGS= [
             ['\\\\vspace\\{.*?\\}', ''],
             ['\\\\hspace\\{.*?\\}', ''],
-            ['\\\\rule\{.*?\\}\\{.*?\\}', ''],
+            [r'\\rule\{.*?\}\{.*?\}', ''],
             ['\\\\addlinespace\\[.*?\\]', ''],
             ['\\\\addlinespace', ''],
             ['\\\\renewcommand\\{\\\\arraystretch\\}\\{.*?\\}', ''],

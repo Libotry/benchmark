@@ -109,19 +109,11 @@ def generate_timeline_traces(
     n_requests = len(adjusted_starts)
     if n_requests == 0:
         return []
-    unique_ids = []  # without sorted group id
-    first_index_lookup = {}  # key: without sorted group id; value: index
-    index_map = []  # idex
-    for idx, val in enumerate(multiturn_group_id_list):
-        if val not in first_index_lookup:
-            first_index_lookup[val] = len(unique_ids)
-            unique_ids.append(val)
-        index_map.append(first_index_lookup[val])
-
-    is_multiturn = True if unique_ids[0] else False
+    unique_ids = set(multiturn_group_id_list)
+    # if has repeated ids, it is a multi-turn conversation
+    is_multiturn = len(unique_ids) < len(multiturn_group_id_list)
     if is_multiturn:
-        get_logger().info("Visualization in multi-turn conversations")
-    y_values = np.array(index_map) + 1
+        get_logger().info("Visualization in multi-turn conversations...")
     # Pre-allocate memory
     red_x = np.full(TIMELINE_POINTS_PER_REQUEST * n_requests, np.nan, dtype=np.float32)
     red_y = np.full_like(red_x, np.nan)
@@ -129,12 +121,19 @@ def generate_timeline_traces(
     blue_y = np.full_like(red_x, np.nan)
     hover_text = np.full(TIMELINE_POINTS_PER_REQUEST * n_requests, None, dtype=object)
     sorted_indices = np.argsort(adjusted_starts)
+    group_id_to_y = {}
+    index = 0
     for sorted_pos, orig_idx in enumerate(sorted_indices):
         # Get the key time points of the current request
         start_t = adjusted_starts[orig_idx]
         first_token_t = adjusted_first_tokens[orig_idx]
         end_t = adjusted_ends[orig_idx]
-        y = y_values[orig_idx]
+        # Get y value based on the group_id of the current request
+        group_id = multiturn_group_id_list[orig_idx]
+        if group_id not in group_id_to_y:
+            index += 1
+            group_id_to_y[group_id] = index
+        y = group_id_to_y[group_id] if is_multiturn else sorted_pos + 1
 
         # Calculate the position in the array
         arr_idx = sorted_pos * 3
@@ -142,7 +141,7 @@ def generate_timeline_traces(
         # Red line (TTFT): from start to the first token
         red_x[arr_idx] = start_t
         red_x[arr_idx + 1] = first_token_t
-        red_y[arr_idx : arr_idx + 2] = y if is_multiturn else sorted_pos + 1
+        red_y[arr_idx : arr_idx + 2] = y
 
         blue_content_data = "NaN"
 
@@ -150,7 +149,7 @@ def generate_timeline_traces(
         if end_t > first_token_t:
             blue_x[arr_idx] = first_token_t
             blue_x[arr_idx + 1] = end_t
-            blue_y[arr_idx : arr_idx + 2] = y if is_multiturn else sorted_pos + 1
+            blue_y[arr_idx : arr_idx + 2] = y
             decode_time = end_t - first_token_t
             blue_content_data = f"{first_token_t:.2f}→{end_t:.2f}={decode_time:.2f}"
 
@@ -361,7 +360,7 @@ def plot_sorted_request_timelines(
     start_timestamp = time.perf_counter()
 
     # ===== 1. Data validation and preprocessing =====
-    logger.info("Starting request timeline processing...")
+    logger.debug("Starting request timeline processing...")
 
     # Validate input data
     if not validate_input_data(start_times, prefill_latencies, end_times):
@@ -390,15 +389,14 @@ def plot_sorted_request_timelines(
     )
     max_time = np.max(adjusted_ends) if n_requests > 0 else 1.0
 
-    logger.info(
+    logger.debug(
         f"Data preprocessing completed in {time.perf_counter() - preprocess_start:.4f}s"
     )
 
     # ===== 2. Generate timeline chart trajectory (only in streaming scenario) =====
     timeline_traces = []
     if has_timeline:
-        logger.info(f"Generating timeline traces for {n_requests} requests...")
-        timeline_start = time.perf_counter()
+        logger.debug(f"Generating timeline traces for {n_requests} requests...")
         timeline_traces = generate_timeline_traces(
             adjusted_starts,
             adjusted_ends,
@@ -406,24 +404,15 @@ def plot_sorted_request_timelines(
             multiturn_group_id_list,
             unit,
         )
-        logger.info(
-            f"Generated timeline trace chunks in {time.perf_counter() - timeline_start:.4f}s"
-        )
 
     # ===== 3. Generate concurrency chart trajectory =====
-    logger.info("Generating concurrency traces...")
-    concurrency_start = time.perf_counter()
+    logger.debug("Generating concurrency traces...")
     concurrency_traces = generate_concurrency_traces(
         adjusted_starts, adjusted_ends, unit
     )
 
-    logger.info(
-        f"Generated concurrency trace chunks in {time.perf_counter() - concurrency_start:.4f}s"
-    )
-
     # ===== 4. Create chart =====
-    logger.info("Creating figure layout...")
-    figure_start = time.perf_counter()
+    logger.debug("Creating figure layout...")
 
     # Create layout configuration
     layout = create_plot_layout(max_time, unit, has_timeline)
@@ -443,11 +432,7 @@ def plot_sorted_request_timelines(
     # Apply layout configuration
     fig.update_layout(layout)
 
-    logger.info(f"Figure layout created in {time.perf_counter() - figure_start:.4f}s")
-
     # ===== 5. Output HTML =====
-    logger.info(f"Writing to {output_file}...")
-    write_start = time.perf_counter()
 
     fig.write_html(
         output_file,
@@ -457,7 +442,5 @@ def plot_sorted_request_timelines(
         full_html=True,
     )
 
-    logger.info(f"HTML written in {time.perf_counter() - write_start:.4f}s")
-    total_time = time.perf_counter() - start_timestamp
-    logger.info(f"Completed! Total execution time: {total_time:.4f}s")
+    logger.info(f"Draw request timeline and concurrency chart completed!")
     return True

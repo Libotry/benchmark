@@ -13,6 +13,7 @@ from ais_bench.benchmark.models import APITemplateParser
 from ais_bench.benchmark.registry import MODELS
 from ais_bench.benchmark.utils.logging import get_logger
 from ais_bench.benchmark.utils.prompt import PromptList
+from ais_bench.benchmark.utils.logging import AISLogger
 from ais_bench.benchmark.models.local_models.huggingface_above_v4_33 import (_get_possible_max_seq_len,
                                                                             _convert_chat_messages,
                                                                             _get_meta_template,
@@ -20,19 +21,6 @@ from ais_bench.benchmark.models.local_models.huggingface_above_v4_33 import (_ge
 
 PromptType = Union[PromptList, str, dict]
 
-
-def format_image_input(inputs):
-    for i in range(len(inputs)):
-        assert isinstance(inputs[i], list)
-        assert len(inputs[i])==1 and isinstance(inputs[i][0], dict)
-        prompt = []
-        for item in inputs[i][0]['prompt']:
-            if item['type']=='image_url':
-                prompt.append({'type': 'image',
-                            'image': item['image_url']})
-            else:
-                prompt.append(item)
-        inputs[i][0]['prompt'] = prompt
 
 @MODELS.register_module()
 class HuggingFaceQwen2VLwithChatTemplate(BaseModel):
@@ -59,6 +47,7 @@ class HuggingFaceQwen2VLwithChatTemplate(BaseModel):
                  fastchat_template: Optional[str] = None,
                  stop_words: Optional[str] = [],
                  mode: str = 'none',
+                 vision_kwargs: dict = dict(),
                  **other_kwargs):
         super().__init__(
             path,
@@ -68,7 +57,7 @@ class HuggingFaceQwen2VLwithChatTemplate(BaseModel):
             generation_kwargs,
             False,
         )
-        self.logger = get_logger()
+        self.logger = AISLogger()
         self.path = path
         self.tokenizer_only = tokenizer_only
         self.template_parser = _get_meta_template(meta_template)
@@ -86,6 +75,12 @@ class HuggingFaceQwen2VLwithChatTemplate(BaseModel):
         self.latencies, self.counts, self.timestamps = [], [], []
         from transformers import AutoProcessor
         self.processor = AutoProcessor.from_pretrained(path)
+        self.min_pixels = vision_kwargs.pop('min_pixels', None)
+        self.max_pixels = vision_kwargs.pop('max_pixels', None)
+        self.total_pixels = vision_kwargs.pop('total_pixels', None)
+        self.fps = vision_kwargs.pop('fps', 2)
+        self.nframe = vision_kwargs.pop('nframe', 128)
+        self.FRAME_FACTOR = 2
 
     def handle_perf_result(self, output_filepath, output_filename):
         e2e_latency = max(self.timestamps) - min(self.timestamps)
@@ -132,7 +127,7 @@ class HuggingFaceQwen2VLwithChatTemplate(BaseModel):
         if is_npu_available():
             model_kwargs['device_map'] = 'npu'
         try:
-            self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(path, **model_kwargs)
+            self.model = Qwen2_5_VLForConditionalGeneration.from_pretrained(path, **model_kwargs, attn_implementation='flash_attention_2')
         except ValueError:
             self.logger.error("cannot load model, please check it!")
 
@@ -163,13 +158,32 @@ class HuggingFaceQwen2VLwithChatTemplate(BaseModel):
         potential_stop_words = [s for s in potential_stop_words if s]
         return potential_stop_words
 
+    def format_image_input(self, inputs):
+        for i in range(len(inputs)):
+            if not isinstance(inputs[i], list) or len(inputs[i]) != 1 or not isinstance(inputs[i][0], dict):
+                self.logger.warning("Invalid input format, please check it!")
+            prompt = []
+            for item in inputs[i][0]['prompt']:
+                if item['type']=='image_url':
+                    image_url = {'type': 'image', 'image': item['image_url']}
+                    if self.min_pixels is not None:
+                        image_url['min_pixels'] = self.min_pixels
+                    if self.max_pixels is not None:
+                        image_url['max_pixels'] = self.max_pixels
+                    if self.total_pixels is not None:
+                        image_url['total_pixels'] = self.total_pixels
+                    prompt.append(image_url)
+                else:
+                    prompt.append(item)
+            inputs[i][0]['prompt'] = prompt
+
     def generate(self,
                  inputs: List[str],
                  max_out_len: int,
                  min_out_len: Optional[int] = None,
                  stopping_criteria: List[str] = [],
                  **kwargs) -> List[str]:
-        format_image_input(inputs)
+        self.format_image_input(inputs)
         messages = _convert_chat_messages(inputs)
         batch_size = len(messages)
 

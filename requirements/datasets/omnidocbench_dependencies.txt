@@ -91,7 +91,7 @@ rich==13.9.4
 scipy==1.10.1
 Send2Trash==1.8.0
 six==1.16.0
-scikit-image==0.25.0
+scikit-image
 soupsieve==2.3.2.post1
 statsmodels==0.13.2
 tabulate==0.9.0

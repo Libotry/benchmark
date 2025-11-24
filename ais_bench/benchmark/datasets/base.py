@@ -1,12 +1,17 @@
 from abc import abstractmethod
 from typing import List, Dict, Optional, Union
 
-from datasets import Dataset, DatasetDict, concatenate_datasets
+from datasets import Dataset, DatasetDict
 from datasets.utils.logging import disable_progress_bar
 
 from ais_bench.benchmark.openicl.icl_dataset_reader import DatasetReader
+from ais_bench.benchmark.utils.logging.logger import AISLogger
+from ais_bench.benchmark.utils.logging.error_codes import DSET_CODES
+from ais_bench.benchmark.utils.logging.exceptions import ParameterValueError
 
 disable_progress_bar() # disable mapping progress bar, preventing terminal interface contamination
+
+logger = AISLogger()
 
 
 class BaseDataset:
@@ -16,12 +21,19 @@ class BaseDataset:
                  k: Union[int, List[int]] = 1,
                  n: int = 1,
                  **kwargs):
-        # maybe duplicate
-        assert (max(k) if isinstance(k, List) else
-                k) <= n, 'Maximum value of `k` must less than or equal to `n`'
+        # Validate k and n parameters
+        max_k = max(k) if isinstance(k, List) else k
+        if max_k > n:
+            raise ParameterValueError(
+                DSET_CODES.INVALID_REPEAT_FACTOR,
+                f"Maximum value of `k` ({max_k}) must be less than or equal to `n` ({n})"
+            )
+        
         self.abbr = kwargs.pop('abbr', 'dataset')
         
+        logger.debug(f"Loading dataset: {self.abbr}")
         self.dataset = self.load(**kwargs)
+        logger.debug(f"Dataset loaded successfully, initializing reader")
         self._init_reader(**reader_cfg)
         self.repeated_dataset(self.abbr, n) # this process will update self.dataset and self.reader.dataset
 
@@ -64,12 +76,12 @@ class BaseDataset:
         else:
             # Handle DatasetDict cases
             new_dict = DatasetDict()
+
             for key in self.reader.dataset:
                 # Add metadata fields (using batching)
                 base_size = len(self.reader.dataset[key])
                 writer_batch_size = max(min(base_size // 100, 1000), 16)
                 index_gen_batch_size = max(min(base_size // 10, 50000), 1000)
-
                 mapped_ds = self.reader.dataset[key].map(
                     lambda x, idx: {'subdivision': f'{abbr}_{key}', 'idx': idx},
                     with_indices=True,

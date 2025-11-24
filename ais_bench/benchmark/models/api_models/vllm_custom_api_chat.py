@@ -1,16 +1,24 @@
-import os
-from typing import Dict, List, Optional, Union, Tuple
-from transformers import AutoTokenizer
-
-from openai import OpenAI
+import json
+import aiohttp
+from typing import Dict, Optional, Union
 
 from ais_bench.benchmark.registry import MODELS
 from ais_bench.benchmark.utils.prompt import PromptList
-
 from ais_bench.benchmark.models import BaseAPIModel, APITemplateParser
-from ais_bench.benchmark.models.output import RequestOutput
+from ais_bench.benchmark.models.output import RequestOutput, Output
+from ais_bench.benchmark.openicl.icl_inferencer.output_handler.ppl_inferencer_output_handler import PPLRequestOutput
 
 PromptType = Union[PromptList, str]
+
+AIOHTTP_TIMEOUT = aiohttp.ClientTimeout(total=20 * 60 * 60)
+
+# Role mapping for converting internal role names to API role names
+ROLE_MAP = {
+    "HUMAN": "user",
+    "BOT": "assistant",
+    "SYSTEM": "system",
+    "TOOL": "tool",
+}
 
 
 @MODELS.register_module()
@@ -23,7 +31,7 @@ class VLLMCustomAPIChat(BaseAPIModel):
         stream (bool, optional): Whether to enable streaming output. Defaults to False.
         max_out_len (int, optional): Maximum output length, controlling the maximum number of tokens for generated text. Defaults to 4096.
         retry (int, optional): Number of retry attempts when request fails. Defaults to 2.
-        headers (Dict, optional): Headers for the API request. Defaults to {"Content-Type": "application/json"}.
+        api_key (str, optional): API key for the API service. Defaults to empty string.
         host_ip (str, optional): Host IP address of the API service. Defaults to "localhost".
         host_port (int, optional): Port number of the API service. Defaults to 8080.
         url (str, optional): Complete URL address of the API service. Defaults to empty string.
@@ -44,7 +52,7 @@ class VLLMCustomAPIChat(BaseAPIModel):
         stream: bool = False,
         max_out_len: int = 4096,
         retry: int = 2,
-        headers: Dict = {"Content-Type": "application/json"},
+        api_key: str = "",
         host_ip: str = "localhost",
         host_port: int = 8080,
         url: str = "",
@@ -59,7 +67,7 @@ class VLLMCustomAPIChat(BaseAPIModel):
             stream=stream,
             max_out_len=max_out_len,
             retry=retry,
-            headers=headers,
+            api_key=api_key,
             host_ip=host_ip,
             host_port=host_port,
             url=url,
@@ -68,6 +76,9 @@ class VLLMCustomAPIChat(BaseAPIModel):
             enable_ssl=enable_ssl,
             verbose=verbose,
         )
+        if api_key:
+            self.headers["Authorization"] = f"Bearer {api_key}"
+            self.logger.info("API key is set")
         self.meta_template = (
             dict(
                 round=[
@@ -82,6 +93,7 @@ class VLLMCustomAPIChat(BaseAPIModel):
         self.model = model if model else self._get_service_model_path()
         self.url = self._get_url()
         self.template_parser = APITemplateParser(self.meta_template)
+        self.session = None
 
     def _get_url(self) -> str:
         endpoint = "v1/chat/completions"
@@ -100,17 +112,19 @@ class VLLMCustomAPIChat(BaseAPIModel):
             messages = []
             for item in input:
                 msg = {"content": item["prompt"]}
-                if item["role"] == "HUMAN":
-                    msg["role"] = "user"
-                elif item["role"] == "BOT":
-                    msg["role"] = "assistant"
-                elif item["role"] == "SYSTEM":
-                    msg["role"] = "system"
+                # Use hash table (dict) driven approach for role mapping
+                role = item.get("role", "")
+                msg["role"] = ROLE_MAP.get(role, role)  # Use original role if not in map
+                for key, value in item.items(): # copy all other items to msg
+                    if key not in ["role", "prompt"]:
+                        msg[key] = value
                 messages.append(msg)
         output.input = messages
         generation_kwargs = self.generation_kwargs.copy()
         generation_kwargs.update({"max_tokens": max_out_len})
         generation_kwargs.update({"model": self.model})
+        if args.get("tools"):
+            generation_kwargs.update({"tools": args["tools"]})
 
         request_body = dict(
             stream=self.stream,
@@ -138,5 +152,42 @@ class VLLMCustomAPIChat(BaseAPIModel):
                 output.reasoning_content += reasoning_content
         if json_content.get("usage"):
             output.output_tokens = json_content["usage"]["completion_tokens"]
+        output.update_extra_details_data_from_text_response(json_content)
         self.logger.debug(f"Output content: {output.content}")
         self.logger.debug(f"Output reasoning content: {output.reasoning_content}")
+
+    async def get_ppl(self, input_data:PromptType, max_out_len: int, output: PPLRequestOutput, session: aiohttp.ClientSession = None, **args):
+        if session is None:
+            self.session = aiohttp.ClientSession(trust_env=True, timeout=AIOHTTP_TIMEOUT)
+            close_session = True
+        else:
+            self.session = session
+            close_session = False
+        request_body = await self.get_request_body(input_data, max_out_len, output, **args)
+        request_body.update({"prompt_logprobs": 0})
+        async with self.session.post(
+            url=self.url, json=request_body, headers=self.headers
+        ) as response:
+            if response.status == 200:
+                raw_data = await response.text()
+                try:
+                    data = json.loads(raw_data)
+                except json.JSONDecodeError as e:
+                    output.success = False
+                    output.error_info = f"Unexpected response format: {raw_data}. Please check if server is working correctly."
+                prompt_logprobs = data.get("prompt_logprobs", [])
+                output.origin_prompt_logprobs = prompt_logprobs
+                loss = self._calc_ppl(prompt_logprobs)
+                output.ppl = loss
+                output.success = True
+            else:
+                output.error_info = response.reason
+                output.success = False
+        if close_session:
+            await self.session.close()
+
+    def _calc_ppl(self, prompt_logprobs: list):
+        logprobs = [list(item.values())[0]['logprob'] for item in prompt_logprobs if item is not None]
+        tokenids = [list(item.keys())[0] for item in prompt_logprobs if item is not None]
+        loss = -sum(logprobs) / len(tokenids)
+        return loss

@@ -1,6 +1,6 @@
 from ais_bench.benchmark.openicl.icl_prompt_template import PromptTemplate
 from ais_bench.benchmark.openicl.icl_retriever import ZeroRetriever
-from ais_bench.benchmark.openicl.icl_inferencer import GenInferencer
+from ais_bench.benchmark.openicl.icl_inferencer import BFCLV3FunctionCallInferencer
 from ais_bench.benchmark.datasets import BFCLDataset, BFCLRelevanceEvaluator
 
 bfcl_category = "live_irrelevance"
@@ -13,7 +13,7 @@ bfcl_reader_cfg = dict(
 bfcl_infer_cfg = dict(
     prompt_template=dict(type=PromptTemplate, template="{question}"),
     retriever=dict(type=ZeroRetriever),
-    inferencer=dict(type=GenInferencer),
+    inferencer=dict(type=BFCLV3FunctionCallInferencer),
 )
 
 bfcl_eval_cfg = dict(

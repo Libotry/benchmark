@@ -64,9 +64,10 @@ class TestBoxedFunctions(unittest.TestCase):
 
     def test_remove_boxed_failure(self):
         """测试移除 boxed 失败"""
+        from ais_bench.benchmark.utils.logging.exceptions import AISBenchDataContentError
         text = "not boxed"
-        result = remove_boxed(text)
-        self.assertIsNone(result)
+        with self.assertRaises(AISBenchDataContentError):
+            remove_boxed(text)
 
     def test_extract_boxed_answer_basic(self):
         """测试提取 boxed 答案"""
@@ -243,7 +244,8 @@ class TestMATHEvaluator(unittest.TestCase):
 
     def test_init_invalid_version(self):
         """测试无效版本"""
-        with self.assertRaises(AssertionError):
+        from ais_bench.benchmark.utils.logging.exceptions import ParameterValueError
+        with self.assertRaises(ParameterValueError):
             MATHEvaluator(version='v3')
 
     def test_score_length_mismatch(self):

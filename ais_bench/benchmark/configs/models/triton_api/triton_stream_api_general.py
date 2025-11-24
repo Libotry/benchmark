@@ -10,7 +10,6 @@ models = [
         model_name="",
         request_rate=0,
         retry=2,
-        headers={"Content-Type": "application/json"},
         host_ip="localhost",
         host_port=8080,
         url="",

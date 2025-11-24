@@ -18,8 +18,13 @@ from datasets import Dataset, DatasetDict, concatenate_datasets, load_dataset
 from ais_bench.benchmark.openicl.icl_evaluator import BaseEvaluator
 from ais_bench.benchmark.registry import ICL_EVALUATORS, LOAD_DATASET
 from ais_bench.benchmark.datasets.utils.datasets import get_data_path
+from ais_bench.benchmark.utils.logging.logger import AISLogger
+from ais_bench.benchmark.utils.logging.error_codes import DSET_CODES
+from ais_bench.benchmark.utils.logging.exceptions import ParameterValueError, AISBenchImportError
 
 from .base import BaseDataset
+
+logger = AISLogger()
 
 
 @LOAD_DATASET.register_module()
@@ -28,6 +33,7 @@ class MBPPDataset(BaseDataset):
     @staticmethod
     def load(path: str, local_mode: bool = False):
         path = get_data_path(path, local_mode=local_mode)
+        logger.debug(f"Loading MBPP dataset from: {path}")
 
         def processing_test(example):
             example['test_case'] = example['test_list']
@@ -39,6 +45,7 @@ class MBPPDataset(BaseDataset):
                                 split='train[:10]').map(processing_test)
         test = load_dataset('json', data_files=path,
                             split='train[10:510]').map(processing_test)
+        logger.debug(f"MBPP dataset loaded: train={len(train)}, test={len(test)} samples")
         return DatasetDict({'train': train, 'test': test})
 
 
@@ -213,7 +220,11 @@ class MBPPEvaluator(BaseEvaluator):
 
     def __init__(self, metric: str = 'MBPP') -> None:
         self.metric = metric
-        assert self.metric in ['MBPP', 'MBPPPlus']
+        if self.metric not in ['MBPP', 'MBPPPlus']:
+            raise ParameterValueError(
+                DSET_CODES.INVALID_MBPP_METRIC,
+                f"MBPP evaluator metric must be 'MBPP' or 'MBPPPlus', got '{self.metric}'"
+            )
         super.__init__()
 
     def score(self, predictions, references):
@@ -251,13 +262,15 @@ class MBPPEvaluator(BaseEvaluator):
                 from evalplus.evaluate import evaluate
                 self.write_jsonl = write_jsonl
                 self.eval = evaluate
-            except ImportError:
-                raise ImportError(
+            except ImportError as e:
+                raise AISBenchImportError(
+                    DSET_CODES.EVALUATION_LIBRARY_NOT_INSTALLED,
                     'Please install evalplus use following steps:\n'
-                    'git clone --recurse-submodules git@github.com:open-compass/human-eval.git\n'  # noqa
+                    'git clone --recurse-submodules git@github.com:open-compass/human-eval.git\n'
                     'cd human-eval\n'
                     'pip install -e .\n'
-                    'pip install -e evalplus\n')
+                    'pip install -e evalplus\n'
+                ) from e
             mbpp_preds = []
             for preds, refer in zip(predictions, references):
                 if not isinstance(preds, list):
@@ -384,11 +397,13 @@ def execution(programs, task_id, timeout):
                     exec(programs, exec_globals)
             key.append('pass')
         except TimeOutException:
+            logger.debug(f"Program execution timeout for index {index}")
             key.append('timeout')
-        except AssertionError:
+        except AssertionError as e:
+            logger.debug(f"Program assertion failed for index {index}: {e}")
             key.append('wrong_answer')
         except BaseException as e:
-            print(e)
+            logger.debug(f"Program execution failed for index {index}: {e}")
             key.append('failed')
 
     manager = multiprocessing.Manager()
@@ -437,7 +452,11 @@ class MBPPPassKEvaluator(MBPPEvaluator):
         if isinstance(num_samples, int):
             num_samples_it = itertools.repeat(num_samples, len(num_correct))
         else:
-            assert len(num_samples) == len(num_correct)
+            if len(num_samples) != len(num_correct):
+                raise ParameterValueError(
+                    DSET_CODES.PREDICTION_LENGTH_MISMATCH,
+                    f"Length mismatch: num_samples ({len(num_samples)}) != num_correct ({len(num_correct)})"
+                )
             num_samples_it = iter(num_samples)
 
         return np.array([
@@ -446,7 +465,11 @@ class MBPPPassKEvaluator(MBPPEvaluator):
         ])
 
     def score(self, predictions, references):
-        assert len(predictions) == len(references)
+        if len(predictions) != len(references):
+            raise ParameterValueError(
+                DSET_CODES.PREDICTION_LENGTH_MISMATCH,
+                f"Predictions and references have different lengths: {len(predictions)} vs {len(references)}"
+            )
 
         task_pass = defaultdict(int)
         task_total = defaultdict(int)

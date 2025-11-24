@@ -13,8 +13,13 @@ from datasets import Dataset
 from ais_bench.benchmark.openicl.icl_evaluator import BaseEvaluator
 from ais_bench.benchmark.registry import LOAD_DATASET
 from ais_bench.benchmark.datasets.utils.datasets import get_data_path
+from ais_bench.benchmark.utils.logging.logger import AISLogger
+from ais_bench.benchmark.utils.logging.error_codes import DSET_CODES
+from ais_bench.benchmark.utils.logging.exceptions import AISBenchImportError
 
 from .base import BaseDataset
+
+logger = AISLogger()
 
 HUMANEVAL_IMPORT_ERROR = '''\
 Please install human_eval use following steps:
@@ -50,12 +55,14 @@ class HumanevalDataset(BaseDataset):
         multiple responses in special cases.
         """
         path = get_data_path(path)
+        logger.debug(f"Loading HumanEval dataset from: {path} (num_repeats={num_repeats})")
         dataset = []
         with open(path, 'r', encoding='utf-8') as f:
             for line in f:
                 dataset.extend(
                     [json.loads(line.strip()) for _ in range(num_repeats)])
         dataset = Dataset.from_list(dataset)
+        logger.debug(f"HumanEval dataset loaded: {len(dataset)} samples (original × {num_repeats})")
         return dataset
 
 
@@ -65,14 +72,18 @@ class HumanEvalEvaluator(BaseEvaluator):
     def __init__(self, k: List[int] = [1, 10, 100]) -> None:
         try:
             import human_eval
-        except ImportError:
-            raise ImportError(HUMANEVAL_IMPORT_ERROR)
+        except ImportError as e:
+            raise AISBenchImportError(
+                DSET_CODES.EVALUATION_LIBRARY_NOT_INSTALLED,
+                HUMANEVAL_IMPORT_ERROR
+            ) from e
 
         self.k = k
         super().__init__()
 
     def score(self, predictions, references, test_set):
         if len(predictions) != len(references):
+            logger.debug(f"Predictions and references have different length: {len(predictions)} vs {len(references)}")
             return {'error': 'preds and refrs have different length'}
 
         from human_eval.data import HUMAN_EVAL, write_jsonl
@@ -105,6 +116,7 @@ class HumanEvalEvaluator(BaseEvaluator):
 
         results = {f'humaneval_{k}': score[k] * 100 for k in score}
         results['details'] = details
+
         return results
 
 
@@ -114,8 +126,11 @@ class HumanEvalPlusEvaluator(BaseEvaluator):
     def __init__(self, k: List[int] = [1, 10, 100]) -> None:
         try:
             import evalplus
-        except ImportError:
-            raise ImportError(HUMANEVAL_PLUS_IMPORT_ERROR)
+        except ImportError as e:
+            raise AISBenchImportError(
+                DSET_CODES.EVALUATION_LIBRARY_NOT_INSTALLED,
+                HUMANEVAL_PLUS_IMPORT_ERROR
+            ) from e
 
         self.k = k
         super().__init__()
@@ -202,7 +217,8 @@ def humaneval_internal_v1_postprocess(text: str) -> str:
     try:
         # for chatGLM related text
         eval_text = eval(text)
-    except Exception:
+    except (SyntaxError, NameError, ValueError) as e:
+        logger.debug(f"Failed to eval text during postprocess: {e}")
         pass
     else:
         if isinstance(eval_text, str):

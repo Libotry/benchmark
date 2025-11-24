@@ -311,7 +311,6 @@ class BaseEvaluator:
             for example_abbr, examples in grouped_examples.items():
                 detail = {'predictions': [], 'example_abbr': example_abbr}
                 c = 0
-                prediction_results = []
 
                 for example in examples:
                     detail['predictions'].append(example['detail'])

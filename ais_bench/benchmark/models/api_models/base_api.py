@@ -20,6 +20,8 @@ from ais_bench.benchmark.utils.logging.exceptions import (
 from ais_bench.benchmark.utils.prompt import PromptList
 from ais_bench.benchmark.models import BaseModel
 from ais_bench.benchmark.models.output import Output
+from ais_bench.benchmark.openicl.icl_inferencer.output_handler.ppl_inferencer_output_handler import PPLRequestOutput
+from ais_bench.benchmark.utils.logging.error_codes import ICLI_CODES
 
 
 def handle_synthetic_input(func):
@@ -42,6 +44,7 @@ class BaseAPIModel(BaseModel):
         stream (bool, optional): Whether to enable streaming output. Defaults to False.
         max_out_len (int, optional): Maximum output length, controlling the maximum number of tokens for generated text. Defaults to 2048.
         retry (int, optional): Number of retry attempts when request fails. Defaults to 2.
+        api_key (str, optional): API key for the API service. Defaults to empty string.
         host_ip (str, optional): Host IP address of the API service. Defaults to "localhost".
         host_port (int, optional): Port number of the API service. Defaults to 8080.
         url (str, optional): Complete URL address of the API service. Defaults to empty string.
@@ -59,7 +62,6 @@ class BaseAPIModel(BaseModel):
         stream: bool = False,
         max_out_len: int = 2048,
         retry: int = 2,
-        headers: Dict = {"Content-Type": "application/json"},
         host_ip: str = "localhost",
         host_port: int = 8080,
         url: str = "",
@@ -67,13 +69,14 @@ class BaseAPIModel(BaseModel):
         generation_kwargs: Dict = dict(),
         enable_ssl: bool = False,
         verbose: bool = False,
+        api_key: str = "",
     ):
         self.logger = AISLogger()
         self.path = path
         self.stream = stream
         self.max_out_len = max_out_len
         self.retry = retry
-        self.headers = headers
+        self.headers = {"Content-Type": "application/json"}
         self.meta_template = meta_template if meta_template else None
         self.host_ip = host_ip
         self.host_port = host_port
@@ -284,6 +287,27 @@ class BaseAPIModel(BaseModel):
                 output.error_info = response.reason
                 output.success = False
 
+    async def get_ppl(self,
+        input_data: PromptType,
+        max_out_len: int,
+        output: PPLRequestOutput,
+        session: aiohttp.ClientSession = None,
+        **args
+        ):
+        """Compute perplexity for a given prompt via the remote API.
+        Args:
+            input_data: Prompt text or list structure the backend expects.
+            max_out_len: Maximum completion tokens; forwarded to the API.
+            output: PPLRequestOutput to fill with upstream results (ppl, logprobs, etc.).
+            session: Optional aiohttp session to reuse across calls.
+            **args: Subclass-specific extra parameters.
+        Subclasses must:
+            • Compose the request and call the API.
+            • Parse returned prompt_logprobs, compute negative average logprob as PPL.
+            • Store results in `output` (ppl value, raw logprobs, success flag, error info).
+            • Respect session lifecycle: only close if they created it.
+        """
+        raise AISBenchNotImplementedError(ICLI_CODES.IMPLEMENTATION_ERROR_PPL_METHOD_NOT_IMPLEMENTED, f"PPL is not supported for this model.")
 
 class APITemplateParser:
     """Intermidate prompt template parser, specifically for API models.

@@ -8,8 +8,13 @@ import pandas as pd
 import tiktoken
 from tqdm import tqdm
 
+from ais_bench.benchmark.utils.logging.logger import AISLogger
+from ais_bench.benchmark.utils.logging.error_codes import DSET_CODES
+from ais_bench.benchmark.utils.logging.exceptions import ParameterValueError, AISBenchDataContentError
 from .constructions import ChatGPTSchema, ResultsForHumanSchema
 from .utils import extract_answer, read_jsonl, save_jsonl
+
+logger = AISLogger()
 
 # define the datasets
 english_qa_datasets = [
@@ -56,8 +61,9 @@ def convert_zero_shot(line, dataset_name):
         elif dataset_name in chinese_cloze_datasets:
             return passage + '问题：' + line['question'] + '\n' \
                                                 '答案：'
-    except NameError:
-        print('Dataset not defined.')
+    except NameError as e:
+        logger.debug(f"Dataset '{dataset_name}' not defined in convert_zero_shot: {e}")
+        return ""
 
 
 prefix = '该问题为单选题，所有选项中必有一个正确答案，且只有一个正确答案。\n'
@@ -87,8 +93,9 @@ def convert_zero_shot_CoT_stage1(line, dataset_name):
         elif dataset_name in chinese_cloze_datasets:
             return passage + '问题：' + line['question'] + '\n' \
                                                 '答案：让我们逐步思考：'
-    except NameError:
-        print('Dataset not defined.')
+    except NameError as e:
+        logger.debug(f"Dataset '{dataset_name}' not defined in convert_zero_shot_CoT_stage1: {e}")
+        return ""
 
 
 # process few-shot raw_prompts
@@ -153,8 +160,9 @@ def combine_prompt(prompt_path,
             question_output = (('问题 {}的解析:   '.format(idx + 1) + exp + '\n') if load_explanation else '') \
                               + '答案是 {}'.format(answer)
         else:
-            raise ValueError(
-                f'During loading few-sot examples, found unknown dataset: {dataset_name}'
+            raise ParameterValueError(
+                DSET_CODES.INVALID_PARAM_VALUE,
+                f'During loading few-shot examples, found unknown dataset: {dataset_name}'
             )
         if chat_mode:
             demostrations.append((question_input, question_output))
@@ -280,7 +288,7 @@ def load_dataset(dataset_name,
                  end_of_example='\n',
                  chat_mode=False,
                  verbose=False):
-
+    
     if environ.get('DATASET_SOURCE') == 'ModelScope':
         from modelscope import MsDataset
         loaded_jsonl = MsDataset.load(parent_path,
@@ -322,8 +330,8 @@ def load_dataset(dataset_name,
         try:
             new_instance = ChatGPTSchema(context=ctxt, metadata=meta_idx)
             processed.append(new_instance.to_dict())
-        except NameError:
-            print('Dataset not defined.')
+        except NameError as e:
+            logger.debug(f"Dataset '{dataset_name}' not defined when processing sample {meta_idx}: {e}")
     return processed
 
 
@@ -350,8 +358,9 @@ def generate_second_stage_input(dataset_name,
             prompt_suffix = '因此，答案是'
             if with_format_prompt:
                 prompt_suffix = chinese_format_prompt + prompt_suffix
-    except NameError:
-        print('Dataset not defined.')
+    except NameError as e:
+        logger.debug(f"Dataset '{dataset_name}' not defined in generate_second_stage_input: {e}")
+    
     processed = []
     for i in range(len(input_list)):
         ctxt = '{0}\n{1}\n{2}'.format(input_list[i]['context'],
@@ -364,7 +373,6 @@ def generate_second_stage_input(dataset_name,
 
 
 def load_dataset_as_result_schema(dataset_name, parent_path):
-
     if environ.get('DATASET_SOURCE') == 'ModelScope':
         from modelscope import MsDataset
         loaded_jsonl = MsDataset.load(parent_path,

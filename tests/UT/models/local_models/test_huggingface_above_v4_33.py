@@ -116,35 +116,58 @@ class TestHuggingFaceAboveV4_33(unittest.TestCase):
         expected = ["HelloWorld"]
         self.assertEqual(result, expected)
 
-    @patch.object(HuggingFacewithChatTemplate, '_load_tokenizer')
-    @patch.object(HuggingFacewithChatTemplate, '_load_model')
-    @patch('ais_bench.benchmark.models.local_models.huggingface_above_v4_33._get_possible_max_seq_len')
-    @patch('ais_bench.benchmark.models.local_models.huggingface_above_v4_33.LMTemplateParser')
-    @patch('ais_bench.benchmark.models.local_models.base.BaseModel.__init__')
-    def test_huggingface_base_model_init(self, mock_base_init, mock_lm_template,
-                                        mock_get_max_len, mock_load_model, mock_load_tokenizer):
-        # 配置mock
-        mock_base_init.return_value = None
-        mock_lm_template.return_value = self.mock_template_parser
-        mock_get_max_len.return_value = 2048
+    def test_huggingface_base_model_init(self):
 
-        # 测试基本初始化
-        model = HuggingFaceBaseModel(
-            path="dummy_path",
-            tokenizer_only=True
-        )
+        def fake_base_init(instance, *args, **kwargs):
+            # Mock BaseModel.__init__ to avoid actual initialization overhead
+            instance.logger = MagicMock()
+            instance.path = kwargs.get('path', 'dummy_path')
+            instance.max_seq_len = kwargs.get('max_seq_len', 2048)
+            instance.tokenizer_only = kwargs.get('tokenizer_only', False)
+            instance.template_parser = self.mock_template_parser
+            instance.eos_token_id = None
+            instance.generation_kwargs = kwargs.get('generation_kwargs', {})
+            instance.sync_rank = kwargs.get('sync_rank', False)
+            instance.is_synthetic = False
 
-        self.assertEqual(model.path, "dummy_path")
-        self.assertTrue(model.tokenizer_only)
-        self.assertEqual(model.max_seq_len, 2048)
+        def fake_load_tokenizer(instance, *args, **kwargs):
+            tokenizer = MagicMock()
+            tokenizer.pad_token_id = 0
+            tokenizer.eos_token = None
+            instance.tokenizer = tokenizer
+            return tokenizer
 
-        # 测试tokenizer_only=False的情况
-        mock_load_model.reset_mock()
-        model = HuggingFaceBaseModel(
-            path="dummy_path",
-            tokenizer_only=False
-        )
-        mock_load_model.assert_called_once()
+        def fake_load_model(instance, *args, **kwargs):
+            model = MagicMock()
+            model.device = 'cpu'
+            instance.model = model
+            return model
+
+        with patch('ais_bench.benchmark.models.local_models.base.BaseModel.__init__', autospec=True, side_effect=fake_base_init) as mock_base_init, \
+             patch('ais_bench.benchmark.models.local_models.huggingface_above_v4_33.LMTemplateParser', return_value=self.mock_template_parser) as mock_lm_template, \
+             patch('ais_bench.benchmark.models.local_models.huggingface_above_v4_33._get_possible_max_seq_len', return_value=2048) as mock_get_max_len, \
+             patch('ais_bench.benchmark.models.local_models.huggingface_above_v4_33._get_meta_template', return_value=self.mock_template_parser) as mock_get_meta_template, \
+             patch.object(HuggingFacewithChatTemplate, '_get_potential_stop_words', return_value=[]) as mock_get_stop_words, \
+             patch.object(HuggingFaceBaseModel, '_load_tokenizer', autospec=True) as mock_load_tokenizer, \
+             patch.object(HuggingFaceBaseModel, '_load_model', autospec=True) as mock_load_model:
+
+            mock_load_tokenizer.side_effect = fake_load_tokenizer
+            mock_load_model.side_effect = fake_load_model
+
+            model = HuggingFaceBaseModel(path="dummy_path", tokenizer_only=True)
+
+            self.assertEqual(model.path, "dummy_path")
+            self.assertTrue(model.tokenizer_only)
+            self.assertEqual(model.max_seq_len, 2048)
+            self.assertEqual(mock_load_tokenizer.call_count, 1)
+
+            mock_load_tokenizer.reset_mock()
+            mock_load_model.reset_mock()
+            model = HuggingFaceBaseModel(path="dummy_path", tokenizer_only=False)
+            self.assertEqual(mock_load_tokenizer.call_count, 1)
+            self.assertEqual(mock_load_model.call_count, 1)
+            mock_lm_template.assert_called()
+            mock_get_max_len.assert_called()
 
     @patch('transformers.AutoTokenizer')
     @patch('transformers.GenerationConfig')
@@ -330,30 +353,42 @@ class TestHuggingFaceAboveV4_33(unittest.TestCase):
         # 由于截断是在函数内部处理的，我们需要验证模型.generate被调用
         model.model.generate.assert_called_once()
 
-    @patch.object(HuggingFaceBaseModel, '_load_tokenizer')
-    @patch.object(HuggingFaceBaseModel, '_load_model')
-    def test_huggingface_base_model_generate(self, mock_load_model, mock_load_tokenizer):
-        # 测试HuggingFaceBaseModel的generate方法
-        with patch('ais_bench.benchmark.models.local_models.base.BaseModel.__init__', return_value=None):
-            model = HuggingFaceBaseModel(
-                path="dummy_path",
-                tokenizer_only=True,
-                max_seq_len=1024
-            )
+    def test_huggingface_base_model_generate(self):
+        def fake_base_init(instance, *args, **kwargs):
+            instance.logger = MagicMock()
+            instance.do_performance = False
+            return None
 
-            # Mock必要的属性
-            model.tokenizer = MagicMock()
+        def fake_load_tokenizer(instance, *args, **kwargs):
+            tokenizer = MagicMock()
+            tokenizer.pad_token_id = 0
+            instance.tokenizer = tokenizer
+            return tokenizer
+
+        def fake_load_model(instance, *args, **kwargs):
+            model = MagicMock()
+            model.device = 'cpu'
+            model.generate.return_value = torch.tensor([[1, 2, 3, 4, 5]])
+            instance.model = model
+            return model
+
+        with patch('ais_bench.benchmark.models.local_models.base.BaseModel.__init__', autospec=True) as mock_base_init, \
+             patch('ais_bench.benchmark.models.local_models.huggingface_above_v4_33._get_possible_max_seq_len', return_value=1024), \
+             patch.object(HuggingFaceBaseModel, '_load_tokenizer', autospec=True) as mock_load_tokenizer, \
+             patch.object(HuggingFaceBaseModel, '_load_model', autospec=True) as mock_load_model:
+
+            mock_base_init.side_effect = fake_base_init
+            mock_load_tokenizer.side_effect = fake_load_tokenizer
+            mock_load_model.side_effect = fake_load_model
+
+            model = HuggingFaceBaseModel(path="dummy_path", tokenizer_only=False, max_seq_len=1024)
             model.tokenizer.batch_encode_plus.return_value = {'input_ids': torch.tensor([[1, 2, 3]]), 'attention_mask': torch.tensor([[1, 1, 1]])}
             model.tokenizer.batch_decode.return_value = ["generated text"]
-            model.model = MagicMock()
-            model.model.device = 'cpu'
-            model.model.generate.return_value = torch.tensor([[1, 2, 3, 4, 5]])
             model.stop_words = []
             model.generation_kwargs = {}
             model.max_seq_len = 1024
             model.do_performance = False
 
-            # 测试generate方法
             inputs = ["test input"]
             with patch('ais_bench.benchmark.models.local_models.huggingface_above_v4_33._convert_base_messages', return_value=["converted input"]), \
                  patch('ais_bench.benchmark.models.local_models.huggingface_above_v4_33.drop_error_generation_kwargs', return_value={}):
@@ -695,48 +730,6 @@ class TestHuggingFaceAboveV4_33(unittest.TestCase):
                 result = mock_criteria(input_ids, scores)
                 self.assertTrue(result)
 
-    def test_huggingface_base_model_init(self):
-        # 测试HuggingFaceBaseModel的初始化
-        with patch('ais_bench.benchmark.models.local_models.base.BaseModel.__init__', return_value=None), \
-             patch.object(HuggingFaceBaseModel, '_load_tokenizer'), \
-             patch.object(HuggingFaceBaseModel, '_load_model'):
-
-            # 创建测试实例
-            model = HuggingFaceBaseModel(
-                path="dummy_path",
-                tokenizer_only=False,
-                max_seq_len=1024
-            )
-
-            # 验证初始化参数
-            self.assertEqual(model.path, "dummy_path")
-            self.assertFalse(model.tokenizer_only)
-            self.assertEqual(model.max_seq_len, 1024)
-            self.assertFalse(model.do_performance)
-
-    def test_load_model_auto_model_fallback(self):
-        # 测试使用AutoModel作为回退的情况
-        model = MagicMock()
-        model.logger = MagicMock()
-
-        with patch('transformers.AutoModelForCausalLM.from_pretrained', side_effect=ValueError()), \
-             patch('transformers.AutoModel.from_pretrained') as mock_auto_model:
-            mock_model = MagicMock()
-            mock_model.eval = MagicMock()
-            mock_model.generation_config.do_sample = True
-            mock_auto_model.return_value = mock_model
-
-            HuggingFacewithChatTemplate._load_model(model, "dummy_path", {})
-
-            # 验证AutoModel被调用
-            mock_auto_model.assert_called_once()
-            # 验证模型被设置为eval模式
-            mock_model.eval.assert_called_once()
-            # 验证do_sample被设置为False
-            self.assertFalse(mock_model.generation_config.do_sample)
-
-
-
     def test_convert_base_messages_empty_input(self):
         # 测试_convert_base_messages函数的边界情况
         # 测试空输入
@@ -784,36 +777,26 @@ class TestHuggingFaceAboveV4_33(unittest.TestCase):
             # 预期这里会处理异常，不直接断言异常
             pass
 
-    @patch('ais_bench.benchmark.models.local_models.huggingface_above_v4_33._get_possible_max_seq_len')
-    @patch('ais_bench.benchmark.models.local_models.base.BaseModel.__init__')
-    def test_huggingface_base_model_init(self, mock_base_init, mock_get_max_len):
-        # 配置mock以避免实际的模型加载
-        mock_base_init.return_value = None
-        mock_get_max_len.return_value = 2048
+    def test_load_model_auto_model_fallback(self):
+        # 测试使用AutoModel作为回退的情况
+        model = MagicMock()
+        model.logger = MagicMock()
 
-        # 测试基本初始化
-        with patch.object(HuggingFaceBaseModel, '_load_tokenizer', return_value=None), \
-             patch.object(HuggingFaceBaseModel, '_load_model', return_value=None):
-            # 测试基本初始化
-            model = HuggingFaceBaseModel(
-                path="dummy_path",
-                tokenizer_only=True,
-                max_seq_len=1024,
-                drop_middle=True
-            )
+        with patch('transformers.AutoModelForCausalLM.from_pretrained', side_effect=ValueError()), \
+             patch('transformers.AutoModel.from_pretrained') as mock_auto_model:
+            mock_model = MagicMock()
+            mock_model.eval = MagicMock()
+            mock_model.generation_config.do_sample = True
+            mock_auto_model.return_value = mock_model
 
-            self.assertEqual(model.path, "dummy_path")
-            self.assertTrue(model.tokenizer_only)
-            self.assertEqual(model.max_seq_len, 2048)  # 来自mock_get_max_len
-            self.assertTrue(model.drop_middle)
+            HuggingFacewithChatTemplate._load_model(model, "dummy_path", {})
 
-            # 测试tokenizer_only=False的情况
-            model = HuggingFaceBaseModel(
-                path="dummy_path",
-                tokenizer_only=False
-            )
-            # 确保模型已加载
-            self.assertFalse(model.tokenizer_only)
+            # 验证AutoModel被调用
+            mock_auto_model.assert_called_once()
+            # 验证模型被设置为eval模式
+            mock_model.eval.assert_called_once()
+            # 验证do_sample被设置为False
+            self.assertFalse(mock_model.generation_config.do_sample)
 
 if __name__ == '__main__':
     unittest.main()

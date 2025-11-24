@@ -24,7 +24,6 @@ from ais_bench.benchmark.utils.logging.error_codes import ICLI_CODES
 from ais_bench.benchmark.utils.logging.exceptions import AISBenchImplementationError, ParameterValueError, AISBenchRuntimeError
 from ais_bench.benchmark.utils.logging.logger import AISLogger
 
-MESSAGE_TYPE_NUM = 4  # post_req, get_req, failed_req, finish_req
 BLOCK_INTERVAL = 0.005  # Avoid request burst accumulation when RR is not configured
 DEFAULT_SAVE_EVERY_FACTOR = 0.1 # default save every factor is 0.1 of batch size
 
@@ -76,9 +75,10 @@ class BaseApiInferencer(BaseInferencer):
             get_req = self.status_counter.get_req
             failed_req = self.status_counter.failed_req
             finish_req = self.status_counter.finish_req
+            finish_case_req = self.status_counter.case_finish_req
 
             # Pack -> bytes, then write back to corresponding slice of shared memory
-            packed = struct.pack("4I", post_req, get_req, failed_req, finish_req)
+            packed = struct.pack("5I", post_req, get_req, failed_req, finish_req, finish_case_req)
             # Write to 16 bytes starting from offset=4 (4 unsigned ints)
             flag = struct.unpack_from("I", message_buf[MESSAGE_INFO.STATUS[0]:MESSAGE_INFO.STATUS[1]])[0]
             if flag == 1 or stop_event.is_set():
@@ -90,7 +90,8 @@ class BaseApiInferencer(BaseInferencer):
             get_req = self.status_counter.get_req
             failed_req = self.status_counter.failed_req
             finish_req = self.status_counter.finish_req
-            packed = struct.pack("4I", post_req, get_req, failed_req, finish_req)
+            finish_case_req = self.status_counter.case_finish_req
+            packed = struct.pack("5I", post_req, get_req, failed_req, finish_req, finish_case_req)
             message_buf[MESSAGE_INFO.POST[0]:MESSAGE_INFO.POST[0] + len(packed)] = packed
         except Exception as e:
             self.logger.debug(f"Failed to update status counter: {str(e)}")
@@ -125,7 +126,7 @@ class BaseApiInferencer(BaseInferencer):
         """
         for i in tqdm(range(warmup_times), desc="Warmup"):
             data = data_list[i % len(data_list)]
-            await self.do_request(data, None, None)
+            await self.do_request(copy.deepcopy(data), None, None)
             res = None
             # do request main producer multi results, warm up fail if any result is not success
             while not self.output_handler.cache_queue.async_q.empty(): 
@@ -537,10 +538,11 @@ class StatusCounter(threading.Thread):
         self.get_req = 0
         self.failed_req = 0
         self.finish_req = 0
-        # Use thread-safe standard library queue with capacity equal to batch_size * 4
+        self.case_finish_req = 0
+        # Use thread-safe standard library queue with capacity equal to batch_size * 5
         self.status_queue = None
         if batch_size > 0:
-            self.status_queue: std_queue.Queue = std_queue.Queue(maxsize=batch_size * MESSAGE_TYPE_NUM)
+            self.status_queue: std_queue.Queue = std_queue.Queue(maxsize=batch_size * 5)
         self._stop_event = threading.Event()
         self._print_interval = 1.0  # Print status once per second
 
@@ -569,6 +571,12 @@ class StatusCounter(threading.Thread):
             return
         self.status_queue.put_nowait("finish_req")
 
+    async def case_finish(self):
+        """Record a finished request."""
+        if not self.status_queue:
+            return
+        self.status_queue.put_nowait("case_finish_req")
+
     def stop(self):
         """Request thread to stop (called by main thread/coroutine)."""
         self._stop_event.set()
@@ -596,6 +604,8 @@ class StatusCounter(threading.Thread):
                     self.failed_req += 1
                 elif status == "finish_req":
                     self.finish_req += 1
+                elif status == "case_finish_req":
+                    self.case_finish_req += 1
 
         # After stop request, try to consume remaining items in queue and update statistics (optional)
         while True:
@@ -611,10 +621,12 @@ class StatusCounter(threading.Thread):
                 self.failed_req += 1
             elif status == "finish_req":
                 self.finish_req += 1
-        
+            elif status == "case_finish_req":
+                self.case_finish_req += 1
         self.logger.debug("Status counter stopped. "
                           f"Process {os.getpid()} finished with status: "
                           f"{self.post_req} post requests "
                           f"{self.get_req} get requests "
                           f"{self.failed_req} failed requests "
-                          f"{self.finish_req} finish requests")
+                          f"{self.finish_req} finish requests "
+                          f"{self.case_finish_req} case finish requests")

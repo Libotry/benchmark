@@ -89,7 +89,9 @@ class TestBaseInferencer(unittest.TestCase):
                 
                 finish_data = inf.get_finish_data_list()
                 self.assertIn("test", finish_data)
-                self.assertEqual(len(finish_data["test"]), 1)
+                # The code merges data from both test.jsonl and tmp/tmp_123.jsonl
+                # Both files contain data with data_abbr="test", so there should be 2 entries
+                self.assertEqual(len(finish_data["test"]), 2)
 
     @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg", return_value=DummyModel())
     @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")

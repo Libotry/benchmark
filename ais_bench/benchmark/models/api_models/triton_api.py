@@ -21,7 +21,7 @@ class TritonCustomAPI(BaseAPIModel):
         stream (bool, optional): Whether to enable streaming output. Defaults to False.
         max_out_len (int, optional): Maximum output length, controlling the maximum number of tokens for generated text. Defaults to 4096.
         retry (int, optional): Number of retry attempts when request fails. Defaults to 2.
-        headers (Dict, optional): Headers for the API request. Defaults to {"Content-Type": "application/json"}.
+        api_key (str, optional): API key for the API service. Defaults to empty string.
         host_ip (str, optional): Host IP address of the API service. Defaults to "localhost".
         host_port (int, optional): Port number of the API service. Defaults to 8080.
         url (str, optional): Complete URL address of the API service. Defaults to empty string.
@@ -41,7 +41,7 @@ class TritonCustomAPI(BaseAPIModel):
         stream: bool = False,
         max_out_len: int = 4096,
         retry: int = 2,
-        headers: Dict = {"Content-Type": "application/json"},
+        api_key: str = "",
         host_ip: str = "localhost",
         host_port: int = 8080,
         url: str = "",
@@ -56,7 +56,7 @@ class TritonCustomAPI(BaseAPIModel):
             stream=stream,
             max_out_len=max_out_len,
             retry=retry,
-            headers=headers,
+            api_key=api_key,
             host_ip=host_ip,
             host_port=host_port,
             url=url,

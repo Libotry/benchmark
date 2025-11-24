@@ -139,6 +139,8 @@ def build_model_from_cfg(model_cfg: ConfigDict):
     model_cfg.pop("summarizer_abbr", None)
     model_cfg.pop("pred_postprocessor", None)
     model_cfg.pop("min_out_len", None)
+    model_cfg.pop("returns_tool_calls", None)
+    model_cfg.pop("traffic_cfg", None)
     return MODELS.build(model_cfg)
 
 def build_perf_metric_calculator_from_cfg(metric_cfg: ConfigDict):

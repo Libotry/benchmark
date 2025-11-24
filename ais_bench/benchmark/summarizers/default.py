@@ -139,6 +139,8 @@ class DefaultSummarizer:
                 dataset_eval_mode[dataset_abbr] = 'ppl'
             elif 'LLInferencer' in inferencer:
                 dataset_eval_mode[dataset_abbr] = 'll'
+            elif 'BFCLV3FunctionCallInferencer' in inferencer:
+                dataset_eval_mode[dataset_abbr] = 'bfcl_v3'
             else:
                 dataset_eval_mode[dataset_abbr] = 'unknown'
                 self.logger.warning(f'unknown inferencer: {inferencer} - {dataset_abbr}')
@@ -151,36 +153,38 @@ class DefaultSummarizer:
         summary_groups = self.summary_groups
         for sg in summary_groups:
             for model_abbr in self.model_abbrs:
-                available_metrics, missing_metrics = [], []
-                for i in sg['subsets']:
-                    if isinstance(i, (list, tuple)):
-                        if i[0] in parsed_results[model_abbr] and i[1] in parsed_results[model_abbr][i[0]]:
-                            available_metrics.append(i)
+                available_subsets, missing_subsets = [], []
+                for subset in sg['subsets']:
+                    if isinstance(subset, (list, tuple)):
+                        target_dataset = subset[0]
+                        target_metric = subset[1]
+                        if target_dataset in parsed_results[model_abbr] and target_metric in parsed_results[model_abbr][target_dataset]:
+                            available_subsets.append(subset)
                         else:
-                            missing_metrics.append(i)
+                            missing_subsets.append(subset)
                     else:
-                        if i in parsed_results[model_abbr]:
-                            available_metrics.append(i)
+                        if subset in parsed_results[model_abbr]:
+                            available_subsets.append(subset)
                         else:
-                            missing_metrics.append(i)
+                            missing_subsets.append(subset)
 
-                if len(available_metrics) == 0:
+                if len(available_subsets) == 0:
                     continue
-                if len(missing_metrics) != 0:
-                    raw_results[model_abbr][sg['name']] = {'error': 'missing metrics: {}'.format(missing_metrics)}
+                if len(missing_subsets) != 0:
+                    raw_results[model_abbr][sg['name']] = {'error': f'missing metrics: {missing_subsets}'}
                     continue
 
                 if 'metric' in sg:
                     default_metric = sg['metric']
-                    need_smart_metric = False
                 else:
-                    need_smart_metric = True
                     if sg.get('std', False):
                         default_metric = 'standard_deviation'
                     elif sg.get('sum', False):
                         default_metric = 'sum'
                     elif sg.get('weights', []):
                         default_metric = 'weighted_average'
+                    elif sg.get('harmonic_mean', False):
+                        default_metric = 'harmonic_mean'
                     else:
                         default_metric = 'naive_average'
 
@@ -196,24 +200,35 @@ class DefaultSummarizer:
                         eval_modes.append(dataset_eval_mode.get(dataset_abbr, 'unknown'))
                 else:
                     group_metrics = list(functools.reduce(lambda a, b: a & b, [set(dataset_metrics[dataset_abbr]) for dataset_abbr in sg['subsets']]))
-                    if need_smart_metric and len(group_metrics) > 1:
-                        for metric in group_metrics:
-                            for dataset_abbr in sg['subsets']:
-                                scores.setdefault(metric, {})[dataset_abbr + '@' + metric] = parsed_results[model_abbr][dataset_abbr][metric]
-                                eval_modes.append(dataset_eval_mode.get(sg['subsets'][0], 'unknown'))
-                    else:
-                        group_metrics = [default_metric]
+                    group_metrics.append(default_metric)
+                    for metric in group_metrics:
                         for dataset_abbr in sg['subsets']:
-                            metric = dataset_metrics[dataset_abbr][0]
-                            scores.setdefault(default_metric, {})[dataset_abbr + '@' + metric] = parsed_results[model_abbr][dataset_abbr][metric]
-                            eval_modes.append(dataset_eval_mode.get(dataset_abbr, 'unknown'))
-
+                            if metric == default_metric:
+                                metric_default = dataset_metrics[dataset_abbr][0]
+                                scores.setdefault(default_metric, {})[dataset_abbr + '@' + metric_default] = \
+                                parsed_results[model_abbr][dataset_abbr][metric_default]
+                                eval_modes.append(dataset_eval_mode.get(dataset_abbr, 'unknown'))
+                            else:
+                                scores.setdefault(metric, {})[dataset_abbr + '@' + metric] = \
+                                parsed_results[model_abbr][dataset_abbr][metric]
+                                eval_modes.append(dataset_eval_mode.get(sg['subsets'][0], 'unknown'))
                 result = {}
                 for metric in scores:
                     if default_metric == 'standard_deviation':
                         avg = sum(scores[metric].values()) / len(scores[metric])
                         variance = sum((scores[metric][k] - avg) ** 2 for k in scores[metric]) / len(scores[metric])
                         scores[metric] = result[metric] = math.sqrt(variance)
+                    elif default_metric == 'harmonic_mean':
+                        # Check for non-positive values that would cause issues in harmonic mean
+                        if any(scores[metric][k] <= 0 for k in scores[metric]):
+                            self.logger.warning(f'Non-positive values found when calculating harmonic mean for {sg["name"]}')
+                            # Handle non-positive values (either skip or use a small positive value)
+                            numerator = len(scores[metric])
+                            denominator = sum(1 / max(scores[metric][k], 1) for k in scores[metric])
+                        else:
+                            numerator = len(scores[metric])
+                            denominator = sum(1 / scores[metric][k] for k in scores[metric])
+                        scores[metric] = result[metric] = numerator / denominator
                     else:
                         if sg.get('weights', []):
                             # check sg['weights'][k] != 0 in case of scores[metric][k] is NaN

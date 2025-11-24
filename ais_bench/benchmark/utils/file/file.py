@@ -204,3 +204,13 @@ def search_configs_from_args(args):
             missingval="N/A",       # 处理空值
         )
     )
+
+def check_mm_custom(path):
+    with open(path, 'r', encoding='utf-8') as f:
+        for line in f:
+            line = json.loads(line.strip())
+            if "type" not in line or "path" not in line:
+                return False
+            elif line["type"] not in ["image", "video", "audio"]:
+                return False
+    return True

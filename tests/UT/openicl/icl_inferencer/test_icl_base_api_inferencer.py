@@ -10,9 +10,9 @@ from multiprocessing import shared_memory, BoundedSemaphore
 from ais_bench.benchmark.openicl.icl_inferencer.icl_base_api_inferencer import (
     BaseApiInferencer,
     StatusCounter,
-    MESSAGE_TYPE_NUM,
     DEFAULT_SAVE_EVERY_FACTOR,
 )
+from ais_bench.benchmark.utils.config.message_constants import MESSAGE_TYPE_NUM
 from ais_bench.benchmark.utils.logging.exceptions import AISBenchImplementationError, ParameterValueError
 from ais_bench.benchmark.tasks.utils import MESSAGE_INFO
 

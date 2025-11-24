@@ -7,10 +7,15 @@ from datasets import Dataset
 from ais_bench.benchmark.openicl.icl_evaluator import BaseEvaluator
 from ais_bench.benchmark.registry import ICL_EVALUATORS, LOAD_DATASET
 from ais_bench.benchmark.datasets.utils.datasets import get_data_path
+from ais_bench.benchmark.utils.logging.logger import AISLogger
+from ais_bench.benchmark.utils.logging.error_codes import DSET_CODES
+from ais_bench.benchmark.utils.logging.exceptions import ParameterValueError, AISBenchDataContentError
 
 from ..base import BaseDataset
 from .math_equivalence import is_equiv
 from .post_process import parse_math_answer
+
+logger = AISLogger()
 
 
 @LOAD_DATASET.register_module()
@@ -19,9 +24,14 @@ class AGIEvalDataset(BaseDataset):
     @staticmethod
     def load(path: str, name: str, setting_name: str):
         path = get_data_path(path)
+        logger.debug(f"Loading AGIEval dataset '{name}' with setting '{setting_name}' from: {path}")
         from .dataset_loader import load_dataset, load_dataset_as_result_schema
 
-        assert setting_name in 'zero-shot', 'only support zero-shot setting'
+        if setting_name != 'zero-shot':
+            raise ParameterValueError(
+                DSET_CODES.INVALID_PARAM_VALUE,
+                f"AGIEval only supports 'zero-shot' setting, got '{setting_name}'"
+            )
         dataset_wo_label = load_dataset(name, setting_name, path)
         dataset_with_label = load_dataset_as_result_schema(name, path)
         dataset = []
@@ -32,6 +42,7 @@ class AGIEvalDataset(BaseDataset):
                 'label': d2.label,
             })
         dataset = Dataset.from_list(dataset)
+        logger.debug(f"AGIEval dataset '{name}' loaded: {len(dataset)} samples")
         return dataset
 
 
@@ -41,7 +52,12 @@ class AGIEvalDataset_v2(BaseDataset):
     @staticmethod
     def load(path: str, name: str, setting_name: str):
         path = get_data_path(path)
-        assert setting_name in 'zero-shot', 'only support zero-shot setting'
+        
+        if setting_name != 'zero-shot':
+            raise ParameterValueError(
+                DSET_CODES.INVALID_PARAM_VALUE,
+                f"AGIEval_v2 only supports 'zero-shot' setting, got '{setting_name}'"
+            )
 
         if environ.get('DATASET_SOURCE') == 'ModelScope':
             from modelscope import MsDataset
@@ -54,7 +70,8 @@ class AGIEvalDataset_v2(BaseDataset):
                 if item['label']:
                     try:
                         label = eval(item['label'])
-                    except Exception:
+                    except Exception as e:
+                        logger.debug(f"Failed to eval label, using as is: {e}")
                         label = item['label']
                     if isinstance(label, list):
                         label = ''.join(label)
@@ -89,6 +106,7 @@ class AGIEvalDataset_v2(BaseDataset):
 class AGIEvalEvaluator(BaseEvaluator):
 
     def score(self, predictions, references):
+        logger.debug(f"Starting AGIEval evaluation with {len(predictions)} samples")
         predictions = [parse_math_answer('', pred) for pred in predictions]
         details = []
         cnt = 0
@@ -99,6 +117,7 @@ class AGIEvalEvaluator(BaseEvaluator):
                 detail['correct'] = True
             details.append(detail)
         score = cnt / len(predictions) * 100
+        logger.debug(f"AGIEval evaluation completed: Score = {score:.2f}% ({cnt}/{len(predictions)})")
         return {'score': score, 'details': details}
 
 
@@ -107,10 +126,12 @@ class AGIEvalEvaluator_mcq(BaseEvaluator):
 
     def score(self, predictions, references):
         if len(predictions) != len(references):
+            logger.debug(f"Predictions and references have different length: {len(predictions)} vs {len(references)}")
             return {
                 'error': 'predictions and references have different '
                 'length'
             }
+        logger.debug(f"Starting AGIEval MCQ evaluation with {len(predictions)} samples")
         details = []
         cnt = 0
         for pred, ref in zip(predictions, references):
@@ -121,5 +142,6 @@ class AGIEvalEvaluator_mcq(BaseEvaluator):
             details.append(detail)
 
         score = cnt / len(predictions) * 100
+        logger.debug(f"AGIEval MCQ evaluation completed: Score = {score:.2f}% ({cnt}/{len(predictions)})")
 
         return {'score': score, 'details': details}

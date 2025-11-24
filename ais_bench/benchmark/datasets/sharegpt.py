@@ -8,7 +8,7 @@ from ais_bench.benchmark.openicl.icl_evaluator import BaseEvaluator
 from ais_bench.benchmark.registry import LOAD_DATASET
 from ais_bench.benchmark.datasets.utils.datasets import get_data_path
 from ais_bench.benchmark.utils.file import load_tokenizer
-from ais_bench.benchmark.utils.logging import get_logger
+from ais_bench.benchmark.utils.logging.logger import AISLogger
 from ais_bench.benchmark.datasets.base import BaseDataset
 
 MIN_PROMPT_LEN = 4
@@ -29,7 +29,7 @@ class ShareGPTDataset(BaseDataset):
         # Filter out the conversations with less than 2 turns.
         dataset = [data for data in dataset if len(data["conversations"]) >= 2]
         cnt_turn = 0
-        logger = get_logger()
+        logger = AISLogger()
         new_dataset = []
         for data in dataset:
             if len(data["conversations"]) % 2 != 0:

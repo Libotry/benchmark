@@ -105,6 +105,7 @@ class TestOpenICLApiInferTask(unittest.TestCase):
         task.pressure = task.cli_args.get("pressure", False)
         task.pressure_time = task.cli_args.get("pressure_time")
         task.warmup_size = task.cli_args.get("num_warmups", 1)
+        task.task_mode = task.cli_args.get("mode", "infer") if not task.pressure else "pressure"
         task.inferencer_cfg = task.dataset_cfgs[0]["infer_cfg"]["inferencer"]
         task.inferencer_cfg["model_cfg"] = task.model_cfg
         task.inferencer_cfg["pressure_time"] = task.pressure_time
@@ -445,8 +446,10 @@ class TestOpenICLApiInferTask(unittest.TestCase):
         
         # Mock inferencer
         mock_inferencer = MagicMock()
+        # get_finish_data_list returns Dict[str, Dict[str, Dict]], not Dict[str, List]
+        # Format: {"data_abbr": {"uuid1": {"id": 0, ...}, "uuid2": {...}}}
         mock_inferencer.get_finish_data_list.return_value = {
-            "test_dataset": [{"id": 0}]
+            "test_dataset": {"uuid1": {"id": 0}}
         }
         mock_inferencer.get_data_list.return_value = [
             {"data_abbr": "test_dataset", "index": 0, "prompt": "test"},
@@ -736,6 +739,7 @@ class TestOpenICLApiInferTask(unittest.TestCase):
         has_no_data_log = any("Get no data to infer" in str(call) for call in mock_logger.warning.call_args_list)
         self.assertTrue(has_no_data_log)
 
+    @patch('ais_bench.benchmark.tasks.openicl_api_infer.merge_dataset_abbr_from_cfg')
     @patch('ais_bench.benchmark.tasks.openicl_api_infer.update_global_data_index')
     @patch('ais_bench.benchmark.tasks.openicl_api_infer.ProgressBar')
     @patch('ais_bench.benchmark.tasks.openicl_api_infer.TokenProducer')
@@ -750,11 +754,12 @@ class TestOpenICLApiInferTask(unittest.TestCase):
     def test_run_multiprocess_mode(self, mock_logger_class, mock_inferencers, mock_retrievers, 
                                     mock_build_dataset, mock_asyncio, mock_abbr, mock_create_shm,
                                     mock_check_vmem, mock_token_producer_class, mock_pb_class,
-                                    mock_update_index):
+                                    mock_update_index, mock_merge_abbr):
         """测试run方法的multiprocess模式"""
         mock_logger = MagicMock()
         mock_logger_class.return_value = mock_logger
         mock_abbr.return_value = "test_task"
+        mock_merge_abbr.return_value = "test_dataset"
         
         task = self._create_task()
         task.logger = mock_logger
@@ -821,6 +826,7 @@ class TestOpenICLApiInferTask(unittest.TestCase):
                 except:
                     pass
 
+    @patch('ais_bench.benchmark.tasks.openicl_api_infer.merge_dataset_abbr_from_cfg')
     @patch('ais_bench.benchmark.tasks.openicl_api_infer.update_global_data_index')
     @patch('ais_bench.benchmark.tasks.openicl_api_infer.ProgressBar')
     @patch('ais_bench.benchmark.tasks.openicl_api_infer.TokenProducer')
@@ -835,11 +841,12 @@ class TestOpenICLApiInferTask(unittest.TestCase):
     def test_run_with_keyboard_interrupt(self, mock_logger_class, mock_inferencers, mock_retrievers,
                                          mock_build_dataset, mock_asyncio, mock_abbr, mock_create_shm,
                                          mock_check_vmem, mock_token_producer_class, mock_pb_class,
-                                         mock_update_index):
+                                         mock_update_index, mock_merge_abbr):
         """测试run方法中KeyboardInterrupt的处理"""
         mock_logger = MagicMock()
         mock_logger_class.return_value = mock_logger
         mock_abbr.return_value = "test_task"
+        mock_merge_abbr.return_value = "test_dataset"
         
         task = self._create_task()
         task.logger = mock_logger

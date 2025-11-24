@@ -11,7 +11,9 @@ from tqdm import tqdm
 
 from ais_bench.benchmark.openicl.icl_evaluator import BaseEvaluator
 from ais_bench.benchmark.registry import ICL_EVALUATORS
-from ais_bench.benchmark.utils.logging import get_logger
+from ais_bench.benchmark.utils.logging.logger import AISLogger
+from ais_bench.benchmark.utils.logging.error_codes import DSET_CODES
+from ais_bench.benchmark.utils.logging.exceptions import AISBenchDataContentError, ParameterValueError
 
 from ais_bench.benchmark.datasets.livecodebench.execute_utils import BASE_IMPORTS, codeexecute_check_correctness
 from ais_bench.benchmark.datasets.livecodebench.extract_utils import (extract_code_execution, extract_code_generation,
@@ -21,8 +23,9 @@ from ais_bench.benchmark.datasets.livecodebench.livecodebench import LCBCodeGene
 from ais_bench.benchmark.datasets.livecodebench.pass_k_utils import compute_metrics_from_results
 
 
+logger = AISLogger()
+
 def codegen_check_correctness(sample, generation, timeout, debug=True):
-    logger = get_logger()
     per_case = len(json.loads(sample['input_output'])['inputs'])
     total_timeout = (timeout + 1) * per_case + 5
 
@@ -44,12 +47,12 @@ def codegen_check_correctness(sample, generation, timeout, debug=True):
             text=True,
             timeout=total_timeout
         )
-    except subprocess.TimeoutExpired:
-        logger.info('global timeout (subprocess.TimeoutExpired)')
+    except subprocess.TimeoutExpired as e:
+        logger.info(f'Global timeout (subprocess.TimeoutExpired): {e}')
         # return all failed placeholder results
         return ([-1] * per_case), {}
-    except Exception:
-        logger.exception('failed to spawn test_runner subprocess')
+    except Exception as e:
+        logger.info(f'Failed to spawn test_runner subprocess: {e}')
         return ([-1] * per_case), {}
 
     stdout = (proc.stdout or "").strip()
@@ -72,8 +75,9 @@ def codegen_check_correctness(sample, generation, timeout, debug=True):
         if res is None:
             raise ValueError("result 'res' missing or None")
         return res, (meta or {})
-    except Exception as e:
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
         # parse failed or data illegal
+        logger.debug(f'Failed to parse test_runner output: {e}')
         logger.info('---- test_runner stdout ----\n%s', stdout)
         return ([-1] * per_case), {}
 
@@ -92,7 +96,7 @@ def evaluate_generations_by_problem(problem_generations: list, sample: list,
     # sample = args[1]
     # debug: bool = args[2]
     # timeout: int = args[3]
-    logger = get_logger()
+    logger = AISLogger()
 
     res = []
     metadata = []
@@ -117,15 +121,20 @@ def evaluate_generations_by_problem(problem_generations: list, sample: list,
                         f'Results were not True for all test cases'  # noqa: F541, E501
                         f' {curr_res=}\n')
         except Exception as e:
-            if debug:
-                logger.info(
-                    f'Compilation failed, test framework exception'  # noqa: F541, E501
-                    f' = {repr(e)}{e}\n')
+            logger.debug(f'Compilation failed, test framework exception: {repr(e)}')
             # break
             curr_metadata = {}
         finally:
-            assert isinstance(curr_res, list)
-            assert isinstance(curr_metadata, dict)
+            if not isinstance(curr_res, list):
+                raise AISBenchDataContentError(
+                    DSET_CODES.INVALID_DATA_TYPE,
+                    f"curr_res must be a list, got {type(curr_res)}: {repr(curr_res)}"
+                )
+            if not isinstance(curr_metadata, dict):
+                raise AISBenchDataContentError(
+                    DSET_CODES.INVALID_DATA_TYPE,
+                    f"curr_metadata must be a dict, got {type(curr_metadata)}: {repr(curr_metadata)}"
+                )
             res.append(curr_res)
             metadata.append(curr_metadata)
     if debug:
@@ -181,8 +190,11 @@ def evaluate_generations(
                 results[index], metadata[index] = future.result()
                 pbar.update(1)
 
-    assert len(results) == len(
-        inputs), f'results = {len(results)} inputs = {len(inputs)} {results=}'
+    if len(results) != len(inputs):
+        raise AISBenchDataContentError(
+            DSET_CODES.PREDICTION_LENGTH_MISMATCH,
+            f'Results and inputs have different lengths: results={len(results)}, inputs={len(inputs)}'
+        )
     # results = {i: r for r, (_, i) in zip(results, inputs)}
 
     return results, metadata
@@ -196,8 +208,6 @@ def codegen_metrics(
     timeout=6,
     debug=False,
 ):
-    logger = get_logger()
-
     samples_linear = []
     generations_linear = []
     remap_index = []
@@ -206,9 +216,17 @@ def codegen_metrics(
     for idx, (sample,
               generation_list) in enumerate(zip(samples_list,
                                                 generations_list)):
-        assert isinstance(generation_list, list), generations_list[0]
+        if not isinstance(generation_list, list):
+            raise AISBenchDataContentError(
+                DSET_CODES.INVALID_DATA_TYPE,
+                f"generation_list must be a list, got {type(generation_list)}. First element in generations_list: {repr(generations_list[0]) if generations_list else 'N/A'}"
+            )
         for generation in generation_list:
-            assert isinstance(generation, str), generations_list[0]
+            if not isinstance(generation, str):
+                raise AISBenchDataContentError(
+                    DSET_CODES.INVALID_DATA_TYPE,
+                    f"generation must be a str, got {type(generation)}: {repr(generation)}"
+                )
             samples_linear.append(sample)
             generations_linear.append([generation])
             remap_index.append(idx)
@@ -241,8 +259,11 @@ def codegen_metrics(
         else:
             final_metadata[i] = [json.dumps(x) for x in final_metadata[i]]
 
-        assert len(final_metadata[i]) == len(
-            generations_list[0]), f'{len(final_metadata[i])=}'
+        if len(final_metadata[i]) != len(generations_list[0]):
+            raise AISBenchDataContentError(
+                DSET_CODES.PREDICTION_LENGTH_MISMATCH,
+                f'Metadata length mismatch: {len(final_metadata[i])} != {len(generations_list[0])}'
+            )
 
     return [metrics, results, final_metadata]
 
@@ -297,7 +318,8 @@ class LCBCodeGenerationEvaluator(BaseEvaluator):
             try:
                 if pred == refer or abs(float(pred) - int(refer)) < 1e-6:
                     return True
-            except Exception:
+            except (ValueError, TypeError) as e:
+                logger.debug(f"Failed to compare pred={pred} and refer={refer}: {e}")
                 pass
             return False
         details = []

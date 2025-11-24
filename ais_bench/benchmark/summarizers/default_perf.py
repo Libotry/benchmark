@@ -29,6 +29,7 @@ from ais_bench.benchmark.openicl.icl_inferencer.output_handler.db_utils import i
 from ais_bench.benchmark.utils.logging.exceptions import AISBenchDataContentError, FileMatchError
 from ais_bench.benchmark.utils.logging.error_codes import SUMM_CODES
 from ais_bench.benchmark.utils.file.load_tokenizer import load_tokenizer, AISTokenizer
+from ais_bench.benchmark.utils.visualization.rps_distribution_plot import add_actual_rps_to_chart
 
 
 def model_abbr_from_cfg_used_in_summarizer(model):
@@ -188,7 +189,7 @@ class DefaultPerfSummarizer:
 
     def _load_tmp_result(self, model_abbr: str, data_abbrs: list):
         tmp_perf_details_dir = osp.join(self.work_dir, "performances", model_abbr, "tmp")
-        if not os.path.exists(tmp_perf_details_dir):
+        if not osp.exists(tmp_perf_details_dir):
             return {}
         tmp_cache_data = defaultdict(list)
         for file in os.listdir(tmp_perf_details_dir):
@@ -264,7 +265,7 @@ class DefaultPerfSummarizer:
 
             for db_name, perf_datas in db_perf_data_map.items():
                 db_path = osp.join(self.work_dir, "performances", model_abbr, "db_data", db_name)
-                if not os.path.exists(db_path):
+                if not osp.exists(db_path):
                     db_path = osp.join(self.work_dir, "performances", model_abbr, "tmp", "tmp_"+db_name)
                 total_counter += len(perf_datas)
                 p = multiprocessing.Process(
@@ -391,7 +392,7 @@ class DefaultPerfSummarizer:
             tables_dict: Dictionary containing performance tables
         """
         for task_name, tables in tables_dict.items():
-            self.logger.info(f"Performance Results of task: {task_name}: ")
+            self.logger.info(f"Performance Results of task [{task_name}]: ")
             for table in tables:
                 print(
                     tabulate.tabulate(
@@ -427,6 +428,18 @@ class DefaultPerfSummarizer:
                 )
                 # In merge_ds mode, use datatype of similar datasets as abbreviation
                 dataset_abbr = self._get_dataset_abbr(dataset_group)
+                # Generate RPS distribution plot with actual rps
+                rps_distribution_plot_file_path = osp.join(
+                    self.work_dir,
+                    "performances",
+                    model_abbr,
+                    f"{dataset_abbr}_rps_distribution_plot.html",
+                )
+
+                if osp.exists(rps_distribution_plot_file_path):
+                    post_time_list = details_perf_datas["start_time"] - min(details_perf_datas["start_time"])
+                    add_actual_rps_to_chart(rps_distribution_plot_file_path, post_time_list)
+
                 # Generate visualization HTML file
                 plot_file_path = osp.join(
                     self.work_dir,

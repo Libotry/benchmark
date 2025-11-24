@@ -15,8 +15,10 @@ class ErrorModule(Enum):
     ICL_INFERENCER = "ICLI"                      # icl_inferencer
     ICL_EVALUATOR = "ICLE"                       # icl_evaluator
     ICL_RETRIEVER = "ICLR"                       # icl_retriever
+    DATASET = "DSET"                             # dataset
     MODEL = "MODEL"                              # model
     CALCULATOR = "CALC"                          # calculator
+    DATASETS = "DATASETS"                        # datasets
     UTILS = "UTILS"                              # other utils func
     UNKNOWN = "UNK"                              # unknown module
 
@@ -134,7 +136,7 @@ class TINFER_CODES:
     N_NOT_POSITIVE = BaseErrorCode("TINFER-PARAM-003", ErrorModule.TASK_INFER, ErrorType.PARAM, 3, "n expected a positive integer")
     INVALID_RAMP_UP_STRATEGY = BaseErrorCode("TINFER-PARAM-004", ErrorModule.TASK_INFER, ErrorType.PARAM, 4, "invalid ramp up strategy")
     VIRTUAL_MEMORY_USAGE_TOO_HIGH = BaseErrorCode("TINFER-PARAM-005", ErrorModule.TASK_INFER, ErrorType.PARAM, 5, "virtual memory usage too high")
-
+    
 class TEVAL_CODES:
     UNKNOWN_ERROR = BaseErrorCode("TEVAL-UNK-001", ErrorModule.TASK_EVALUATE, ErrorType.UNKNOWN, 1, "unknown error of evaluate task")
     N_K_ILLEGAL = BaseErrorCode("TEVAL-PARAM-001", ErrorModule.TASK_EVALUATE, ErrorType.PARAM, 1, "n and k parameters illegal")
@@ -149,7 +151,11 @@ class ICLI_CODES:
     CONCURRENCY_NOT_SET_IN_PRESSEURE_MODE = BaseErrorCode("ICLI-PARAM-003", ErrorModule.ICL_INFERENCER, ErrorType.PARAM, 3, "concurrency not set in pressure mode")
     BATCH_SIZE_OUT_OF_RANGE = BaseErrorCode("ICLI-PARAM-004", ErrorModule.ICL_INFERENCER, ErrorType.PARAM, 4, "batch size out of range")
     INVALID_OUTPUT_FILEPATH = BaseErrorCode("ICLI-PARAM-005", ErrorModule.ICL_INFERENCER, ErrorType.PARAM, 5, "invalid output jsonl filepath")
-
+    PERF_MODE_NOT_SUPPORTED_FOR_PPL_INFERENCE = BaseErrorCode("ICLI-PARAM-006", ErrorModule.ICL_INFERENCER, ErrorType.PARAM, 6, "perf mode is not supported for ppl inference")
+    STREAM_MODE_NOT_SUPPORTED_FOR_PPL_INFERENCE = BaseErrorCode("ICLI-PARAM-007", ErrorModule.ICL_INFERENCER, ErrorType.PARAM, 7, "stream mode is not supported for ppl inference")
+    IMPLEMENTATION_ERROR_PPL_METHOD_NOT_IMPLEMENTED = BaseErrorCode("ICLI-IMPL-008", ErrorModule.ICL_INFERENCER, ErrorType.IMPLEMENTATION, 8, "ppl method not implemented")
+    IMPLEMENTATION_ERROR_OUTPUT_NOT_PPL_RESPONSE_OUTPUT = BaseErrorCode("ICLI-IMPL-009", ErrorModule.ICL_INFERENCER, ErrorType.IMPLEMENTATION, 9, "output is not a PPLResponseOutput")
+    
     WARMUP_GET_RESULT_FAILED = BaseErrorCode("ICLI-RUNTIME-001", ErrorModule.ICL_INFERENCER, ErrorType.RUNTIME, 1, "get result from cache queue failed")
     WARMUP_FAILED = BaseErrorCode("ICLI-RUNTIME-002", ErrorModule.ICL_INFERENCER, ErrorType.RUNTIME, 2, "warmup failed")
     WARMUP_EMPTY_RESULT = BaseErrorCode("ICLI-RUNTIME-003", ErrorModule.ICL_INFERENCER, ErrorType.RUNTIME, 3, "empty result from cache queue")
@@ -157,6 +163,9 @@ class ICLI_CODES:
     IMPLEMENTATION_ERROR = BaseErrorCode("ICLI-IMPL-001", ErrorModule.ICL_INFERENCER, ErrorType.IMPLEMENTATION, 1, "not implemented error")
     IMPLEMENTATION_ERROR_DO_REQUEST_METHOD_NOT_IMPLEMENTED = BaseErrorCode("ICLI-IMPL-002", ErrorModule.ICL_INFERENCER, ErrorType.IMPLEMENTATION, 2, "do request method for api inferencer not implemented")
     IMPLEMENTATION_ERROR_BATCH_INFERENCE_METHOD_NOT_IMPLEMENTED = BaseErrorCode("ICLI-IMPL-003", ErrorModule.ICL_INFERENCER, ErrorType.IMPLEMENTATION, 3, "batch inference method for local inferencer not implemented")
+    IMPLEMENTATION_ERROR_BFCL_V3_NOT_SUPPORT_PERF_MODE = BaseErrorCode("ICLI-IMPL-004", ErrorModule.ICL_INFERENCER, ErrorType.IMPLEMENTATION, 4, "bfcl v3 not support perf mode")
+    IMPLEMENTATION_ERROR_OUTPUT_NOT_FUNCTION_CALL_OUTPUT = BaseErrorCode("ICLI-IMPL-005", ErrorModule.ICL_INFERENCER, ErrorType.IMPLEMENTATION, 5, "output is not correct type")
+    IMPLEMENTATION_ERROR_BFCL_V3_NOT_SUPPORT_STREAM = BaseErrorCode("ICLI-IMPL-006", ErrorModule.ICL_INFERENCER, ErrorType.IMPLEMENTATION, 6, "bfcl v3 not support stream")
 
     INFER_RESULT_WRITE_ERROR = BaseErrorCode("ICLI-FILE-001", ErrorModule.ICL_INFERENCER, ErrorType.FILE, 1, "failed to write results files")
     SQLITE_WRITE_ERROR = BaseErrorCode("ICLI-FILE-002", ErrorModule.ICL_INFERENCER, ErrorType.FILE, 2, "failed to write results to sqlite database")
@@ -225,6 +234,7 @@ class UTILS_CODES:
     NON_BFCL_DATASET = BaseErrorCode("UTILS-CFG-006", ErrorModule.UTILS, ErrorType.CONFIG, 6, "non BFCL dataset found for VLLMFunctionCallAPIChat")
     INCOMPATIBLE_MERGE_DS = BaseErrorCode("UTILS-CFG-007", ErrorModule.UTILS, ErrorType.CONFIG, 7, "incompatible --merge-ds option for function call task")
     SYNTHETIC_DS_MISS_REQUIRED_PARAM = BaseErrorCode("UTILS-CFG-001", ErrorModule.UTILS, ErrorType.CONFIG, 1, "synthetic dataset miss required param")
+    MM_CUSTOM_DATASET_WRONG_FORMAT = BaseErrorCode("UTILS-CFG-008", ErrorModule.UTILS, ErrorType.CONFIG, 8, "invalid mm custom dataset")
 
 class CALC_CODES:
     UNKNOWN_ERROR = BaseErrorCode("CALC-UNK-001", ErrorModule.CALCULATOR, ErrorType.UNKNOWN, 1, "unknown error of calculator")
@@ -232,6 +242,43 @@ class CALC_CODES:
     DUMPING_RESULT_FAILED = BaseErrorCode("CALC-FILE-001", ErrorModule.CALCULATOR, ErrorType.FILE, 1, "fail to dump result to file")
     ALL_REQUEST_DATAS_INVALID = BaseErrorCode("CALC-DATA-001", ErrorModule.CALCULATOR, ErrorType.DATA, 1, "all request datas are invalid")
     CAN_NOT_FIND_STABLE_STAGE = BaseErrorCode("CALC-DATA-002", ErrorModule.CALCULATOR, ErrorType.DATA, 2, "invalid response datas")
+    OUTPUT_HANDLER_INVALID_OUTPUT = BaseErrorCode("CALC-DATA-003", ErrorModule.CALCULATOR, ErrorType.DATA, 3, "output handler invalid output")
+
+class DATASETS_CODES:
+    UNKNOWN_ERROR = BaseErrorCode("DATASETS-UNK-001", ErrorModule.DATASETS, ErrorType.UNKNOWN, 1, "unknown error of datasets")
+    INVALID_DATASET_CONFIG = BaseErrorCode("DATASETS-CFG-001", ErrorModule.DATASETS, ErrorType.CONFIG, 1, "invalid dataset config")
+
+
+class DSET_CODES:
+    UNKNOWN_ERROR = BaseErrorCode("DSET-UNK-001", ErrorModule.DATASET, ErrorType.UNKNOWN, 1, "unknown error of dataset")
+    
+    # File related errors
+    FILE_NOT_FOUND = BaseErrorCode("DSET-FILE-001", ErrorModule.DATASET, ErrorType.FILE, 1, "dataset file not found")
+    FILE_READ_ERROR = BaseErrorCode("DSET-FILE-002", ErrorModule.DATASET, ErrorType.FILE, 2, "failed to read dataset file")
+    FILE_FORMAT_ERROR = BaseErrorCode("DSET-FILE-003", ErrorModule.DATASET, ErrorType.FILE, 3, "invalid dataset file format")
+    
+    # Data related errors
+    DATA_EMPTY = BaseErrorCode("DSET-DATA-001", ErrorModule.DATASET, ErrorType.DATA, 1, "dataset is empty")
+    DATA_INVALID_STRUCTURE = BaseErrorCode("DSET-DATA-002", ErrorModule.DATASET, ErrorType.DATA, 2, "dataset has invalid structure")
+    DATA_MISSING_REQUIRED_FIELD = BaseErrorCode("DSET-DATA-003", ErrorModule.DATASET, ErrorType.DATA, 3, "dataset missing required field")
+    DATA_LABEL_PARSE_ERROR = BaseErrorCode("DSET-DATA-004", ErrorModule.DATASET, ErrorType.DATA, 4, "failed to parse label")
+    DATA_PREPROCESSING_ERROR = BaseErrorCode("DSET-DATA-005", ErrorModule.DATASET, ErrorType.DATA, 5, "data preprocessing or cleaning failed")
+    INVALID_DATA_TYPE = BaseErrorCode("DSET-DATA-006", ErrorModule.DATASET, ErrorType.DATA, 6, "data type does not match expected type")
+    
+    # Parameter related errors
+    INVALID_SPLIT_NAME = BaseErrorCode("DSET-PARAM-001", ErrorModule.DATASET, ErrorType.PARAM, 1, "invalid split name")
+    INVALID_REPEAT_FACTOR = BaseErrorCode("DSET-PARAM-002", ErrorModule.DATASET, ErrorType.PARAM, 2, "invalid repeat factor")
+    INVALID_DATASET_NAME = BaseErrorCode("DSET-PARAM-003", ErrorModule.DATASET, ErrorType.PARAM, 3, "invalid dataset name")
+    INVALID_PARAM_VALUE = BaseErrorCode("DSET-PARAM-004", ErrorModule.DATASET, ErrorType.PARAM, 4, "invalid parameter value")
+    
+    # Dependency related errors
+    MODELSCOPE_NOT_INSTALLED = BaseErrorCode("DSET-DEPENDENCY-001", ErrorModule.DATASET, ErrorType.DEPENDENCY, 1, "ModelScope library not installed")
+    EVALUATION_LIBRARY_NOT_INSTALLED = BaseErrorCode("DSET-DEPENDENCY-002", ErrorModule.DATASET, ErrorType.DEPENDENCY, 2, "evaluation library not installed")
+    
+    # Evaluation related errors
+    PREDICTION_LENGTH_MISMATCH = BaseErrorCode("DSET-MTRC-001", ErrorModule.DATASET, ErrorType.METRIC, 1, "prediction and reference have different length")
+    EVALUATION_FAILED = BaseErrorCode("DSET-MTRC-002", ErrorModule.DATASET, ErrorType.METRIC, 2, "evaluation failed")
+    INVALID_MBPP_METRIC = BaseErrorCode("DSET-MTRC-003", ErrorModule.DATASET, ErrorType.METRIC, 3, "invalid MBPP metric type")
 
 
 ERROR_CODES_CLASSES = [
@@ -250,6 +297,8 @@ ERROR_CODES_CLASSES = [
     UNK_CODES,
     UTILS_CODES,
     CALC_CODES,
+    DATASETS_CODES,
+    DSET_CODES,
 ]
 
 # init error code manager

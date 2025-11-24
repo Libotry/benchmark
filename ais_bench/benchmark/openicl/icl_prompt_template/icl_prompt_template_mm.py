@@ -1,5 +1,6 @@
 """Multimodal Prompt Template."""
-
+import copy
+import ast
 from typing import Dict, Hashable, Optional, Union
 
 from ais_bench.benchmark.registry import ICL_PROMPT_TEMPLATES
@@ -38,19 +39,37 @@ class MMPromptTemplate(BasePromptTemplate):
             if "prompt_mm" not in data.keys():
                 return False
         return True
+    
+    def format_mm_url(self, template, entry):
+        """
+        for mm_custom dataset
+        """
+        res_template = copy.deepcopy(template)
+        for data in res_template["round"]:
+            if 'prompt_mm' in data.keys() and isinstance(['prompt_mm'], dict) and 'mm_url' in data['prompt_mm'].keys():
+                index = entry['type'] + '_url'
+                data['prompt_mm'][index] = data['prompt_mm'].pop('mm_url')
+        return res_template
 
     def get_mm_template(self, item):
         """
-        change format
+        change format {image_url: xxx, text: yyy} ---> [{type: image_url, image_url: xxx}, {type: text, text: yyy}]
         """
         item = item["prompt_mm"]
         res = []
+        if isinstance(item, list):
+            return item
         for key in item.keys():
             if key not in ["text", "image_url", "video_url", "audio_url"]:
                 raise AISBenchValueError(
                     ICLR_CODES.MULTIMODAL_TEMPLATE_TYPE_ERROR,
                     f"The keys in prompt_mm must be one of: text, image_url, video_url or audio_url, but got {key}"
                 )
+            if item[key].startswith('[') and item[key].endswith(']'): # mm_custom: maybe multi-images
+                mm_urls = ast.literal_eval(item[key])
+                for mm_url in mm_urls:
+                    res.append({"type": key, key: mm_url})
+                continue
             res.append({"type": key, key: item[key]})
         return res
 
@@ -81,8 +100,9 @@ class MMPromptTemplate(BasePromptTemplate):
         """
         if not self.check_mm_template():
             self.logger.warning(f'Expected to get template with round and prompt_mm, but got {self.template}')
-        template = self._encode_template(self.template, ice=False)
-        template = template.format(**entry)
+        template = self.format_mm_url(self.template, entry)
+        template = self._encode_template(template, ice=False)
+        template = template.format_mm(**entry)
         for i, item in enumerate(template):
             if "prompt_mm" in item:
                 template[i]["prompt_mm"] = self.get_mm_template(item)

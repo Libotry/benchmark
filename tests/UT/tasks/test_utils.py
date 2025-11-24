@@ -36,7 +36,7 @@ class TestCreateMessageShareMemory(unittest.TestCase):
         self.assertEqual(shm.size, MESSAGE_SIZE)
         
         # 验证初始值
-        status, post, recv, fail, finish, _, data_index = struct.unpack(FMT, shm.buf)
+        status, post, recv, fail, finish, case_finish, _, data_index = struct.unpack(FMT, shm.buf)
         self.assertEqual(status, 0)
         self.assertEqual(post, 0)
         self.assertEqual(recv, 0)
@@ -154,7 +154,7 @@ class TestProgressBar(unittest.TestCase):
         self.assertEqual(progress_bar.total_data_num, self.data_num)
         self.assertEqual(progress_bar.debug, self.debug)
         self.assertEqual(progress_bar.pressure, self.pressure)
-        self.assertEqual(progress_bar.stats, {"post": 0, "recv": 0, "fail": 0, "finish": 0})
+        self.assertEqual(progress_bar.stats, {"post": 0, "recv": 0, "fail": 0, "finish": 0, "case_finish": 0})
 
     @patch('ais_bench.benchmark.tasks.utils.AISLogger')
     def test_recalc_aggregate(self, mock_logger_class):
@@ -192,7 +192,7 @@ class TestProgressBar(unittest.TestCase):
         self.per_pid_shms[12345] = shm
         
         # 设置共享内存的值
-        shm.buf[:] = struct.pack(FMT, 0, 10, 8, 1, 7, 0, INDEX_READ_FLAG)
+        shm.buf[:] = struct.pack(FMT, 0, 10, 8, 1, 7, 0, 0, INDEX_READ_FLAG)
         
         progress_bar = ProgressBar(
             per_pid_shms=self.per_pid_shms,
@@ -257,46 +257,6 @@ class TestProgressBar(unittest.TestCase):
         self.assertIn("finish", rates)
 
     @patch('ais_bench.benchmark.tasks.utils.AISLogger')
-    def test_format_per_pid_brief(self, mock_logger_class):
-        """测试_format_per_pid_brief方法"""
-        mock_logger = MagicMock()
-        mock_logger_class.return_value = mock_logger
-        
-        progress_bar = ProgressBar(
-            per_pid_shms={},
-            stop_event=self.stop_event,
-            data_num=self.data_num
-        )
-        
-        progress_bar.per_pid_stats = {
-            12345: {"post": 10, "recv": 8, "fail": 1, "finish": 7},
-            67890: {"post": 15, "recv": 12, "fail": 2, "finish": 10}
-        }
-        
-        result = progress_bar._format_per_pid_brief()
-        
-        self.assertIn("12345", result)
-        self.assertIn("67890", result)
-        self.assertIn("7/10/8/1", result)  # finish/post/recv/fail
-
-    @patch('ais_bench.benchmark.tasks.utils.AISLogger')
-    def test_format_per_pid_brief_empty(self, mock_logger_class):
-        """测试_format_per_pid_brief方法在没有worker时"""
-        mock_logger = MagicMock()
-        mock_logger_class.return_value = mock_logger
-        
-        progress_bar = ProgressBar(
-            per_pid_shms={},
-            stop_event=self.stop_event,
-            data_num=self.data_num
-        )
-        
-        progress_bar.per_pid_stats = {}
-        
-        result = progress_bar._format_per_pid_brief()
-        self.assertEqual(result, "<no workers>")
-
-    @patch('ais_bench.benchmark.tasks.utils.AISLogger')
     def test_set_message_flag(self, mock_logger_class):
         """测试set_message_flag方法"""
         mock_logger = MagicMock()
@@ -315,7 +275,7 @@ class TestProgressBar(unittest.TestCase):
         progress_bar.set_message_flag(flag)
         
         # 验证标志被设置
-        status, _, _, _, _, _, _ = struct.unpack(FMT, shm.buf)
+        status, _, _, _, _, _, _, _ = struct.unpack(FMT, shm.buf)
         self.assertEqual(status, flag)
         
         # 验证记录日志
@@ -342,7 +302,7 @@ class TestTokenProducer(unittest.TestCase):
             request_rate=self.request_rate,
             traffic_cfg=self.traffic_cfg,
             request_num=self.request_num,
-            pressure_mode=self.pressure_mode
+            mode="pressure" if self.pressure_mode else "infer"
         )
         
         self.assertEqual(producer.request_rate, self.request_rate)
@@ -360,10 +320,10 @@ class TestTokenProducer(unittest.TestCase):
             request_rate=0.05,
             traffic_cfg=self.traffic_cfg,
             request_num=self.request_num,
-            pressure_mode=self.pressure_mode
+            mode="pressure" if self.pressure_mode else "infer"
         )
         
-        self.assertEqual(producer.request_rate, float("inf"))
+        self.assertEqual(producer.request_rate, 0.05)
         self.assertIsNone(producer.token_bucket)
 
     @patch('ais_bench.benchmark.tasks.utils.AISLogger')
@@ -383,7 +343,7 @@ class TestTokenProducer(unittest.TestCase):
             request_rate=self.request_rate,
             traffic_cfg=traffic_cfg,
             request_num=self.request_num,
-            pressure_mode=self.pressure_mode
+            mode="pressure" if self.pressure_mode else "infer"
         )
         
         self.assertIsNotNone(producer.interval_lists)
@@ -409,7 +369,7 @@ class TestTokenProducer(unittest.TestCase):
                 request_rate=self.request_rate,
                 traffic_cfg=traffic_cfg,
                 request_num=self.request_num,
-                pressure_mode=self.pressure_mode
+                mode="infer"
             )
         
         error_code = context.exception.error_code_str
@@ -431,7 +391,7 @@ class TestTokenProducer(unittest.TestCase):
             request_rate=self.request_rate,
             traffic_cfg=traffic_cfg,
             request_num=10,
-            pressure_mode=self.pressure_mode
+            mode="pressure" if self.pressure_mode else "infer"
         )
         
         self.assertEqual(len(producer.interval_lists), 10)
@@ -455,7 +415,7 @@ class TestTokenProducer(unittest.TestCase):
             request_rate=self.request_rate,
             traffic_cfg=traffic_cfg,
             request_num=10,
-            pressure_mode=self.pressure_mode
+            mode="pressure" if self.pressure_mode else "infer"
         )
         
         self.assertEqual(len(producer.interval_lists), 10)
@@ -470,7 +430,7 @@ class TestTokenProducer(unittest.TestCase):
             request_rate=0.05,  # 低速率，token_bucket为None
             traffic_cfg=self.traffic_cfg,
             request_num=self.request_num,
-            pressure_mode=self.pressure_mode
+            mode="pressure" if self.pressure_mode else "infer"
         )
         
         stop_event = Event()
@@ -489,7 +449,7 @@ class TestTokenProducer(unittest.TestCase):
             request_rate=self.request_rate,
             traffic_cfg=self.traffic_cfg,
             request_num=10,  # 小数量用于快速测试
-            pressure_mode=self.pressure_mode
+            mode="pressure" if self.pressure_mode else "infer"
         )
         
         stop_event = Event()
@@ -519,7 +479,7 @@ class TestTokenProducer(unittest.TestCase):
             request_rate=self.request_rate,
             traffic_cfg=self.traffic_cfg,
             request_num=10,
-            pressure_mode=self.pressure_mode
+            mode="pressure" if self.pressure_mode else "infer"
         )
         
         stop_event = Event()
@@ -718,7 +678,7 @@ class TestTokenProducer(unittest.TestCase):
         # 设置共享内存状态为WAIT_FLAG，模拟子进程还在等待
         # 确保shm.buf存在
         if shm.buf is not None:
-            shm.buf[:] = struct.pack(FMT, WAIT_FLAG, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
+            shm.buf[:] = struct.pack(FMT, WAIT_FLAG, 0, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
         
         # Mock task_state_manager
         mock_task_state_manager = MagicMock()
@@ -745,7 +705,7 @@ class TestTokenProducer(unittest.TestCase):
             
             # 模拟子进程完成：清除WAIT_FLAG
             if shm.buf is not None:
-                shm.buf[:] = struct.pack(FMT, 0, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
+                shm.buf[:] = struct.pack(FMT, 0, 0, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
             
             # 清除stop_event，让display方法退出初始等待循环，进入监控循环
             stop_event.clear()
@@ -784,7 +744,7 @@ class TestTokenProducer(unittest.TestCase):
         )
         
         # 设置共享内存状态为非WAIT_FLAG，模拟子进程已完成
-        shm.buf[:] = struct.pack(FMT, 0, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
+        shm.buf[:] = struct.pack(FMT, 0, 0, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
         
         # Mock task_state_manager
         mock_task_state_manager = MagicMock()
@@ -953,7 +913,7 @@ class TestProgressBarAdditional(unittest.TestCase):
         )
         
         # 设置共享内存，模拟有统计数据
-        shm.buf[:] = struct.pack(FMT, 0, 10, 8, 1, 5, 0, INDEX_READ_FLAG)
+        shm.buf[:] = struct.pack(FMT, 0, 10, 8, 1, 5, 0, 0, INDEX_READ_FLAG)
         
         mock_task_state_manager = MagicMock()
         
@@ -1092,7 +1052,7 @@ class TestTokenProducerAdditional(unittest.TestCase):
             request_rate=self.request_rate,
             traffic_cfg=self.traffic_cfg,
             request_num=10,
-            pressure_mode=self.pressure_mode
+            mode="pressure" if self.pressure_mode else "infer"
         )
         
         stop_event = Event()
@@ -1100,7 +1060,7 @@ class TestTokenProducerAdditional(unittest.TestCase):
         per_pid_shms = {12345: shm}
         
         # 设置共享内存状态为WAIT_FLAG，让produce_token跳过初始等待
-        shm.buf[:] = struct.pack(FMT, WAIT_FLAG, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
+        shm.buf[:] = struct.pack(FMT, WAIT_FLAG, 0, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
         
         # Mock token_bucket.release() 在else分支抛出异常
         producer.token_bucket.release = MagicMock(side_effect=ValueError("Semaphore released too many times"))
@@ -1136,7 +1096,7 @@ class TestTokenProducerAdditional(unittest.TestCase):
             request_rate=100,  # 高频率
             traffic_cfg=self.traffic_cfg,
             request_num=10,
-            pressure_mode=self.pressure_mode
+            mode="pressure" if self.pressure_mode else "infer"
         )
         
         stop_event = Event()
@@ -1144,7 +1104,7 @@ class TestTokenProducerAdditional(unittest.TestCase):
         per_pid_shms = {12345: shm}
         
         # 设置共享内存状态为WAIT_FLAG
-        shm.buf[:] = struct.pack(FMT, WAIT_FLAG, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
+        shm.buf[:] = struct.pack(FMT, WAIT_FLAG, 0, 0, 0, 0, 0, 0, INDEX_READ_FLAG)
         
         # 设置interval_lists，使得sleep_interval可能为负
         producer.interval_lists = [0.001]  # 很小的间隔

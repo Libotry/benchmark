@@ -6,7 +6,7 @@ from unittest import mock
 from copy import deepcopy
 import uuid
 
-from ais_bench.benchmark.models.api_models.triton_api import TritonCustomAPI
+from ais_bench.benchmark.models import TritonCustomAPI
 from ais_bench.benchmark.utils.prompt import PromptList
 from ais_bench.benchmark.models.output import Output
 

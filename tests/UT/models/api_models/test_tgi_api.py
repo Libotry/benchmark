@@ -5,7 +5,7 @@ import unittest
 from unittest import mock
 from copy import deepcopy
 
-from ais_bench.benchmark.models.api_models.tgi_api import TGICustomAPI
+from ais_bench.benchmark.models import TGICustomAPI
 from ais_bench.benchmark.utils.prompt import PromptList
 from ais_bench.benchmark.models.output import Output
 

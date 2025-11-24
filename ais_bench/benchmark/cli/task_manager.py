@@ -1,8 +1,10 @@
 from ais_bench.benchmark.cli.argument_parser import ArgumentParser
+from ais_bench.benchmark.utils.logging.logger import AISLogger
 
 
 class TaskManager:
     def __init__(self) -> None:
+        self.logger = AISLogger()
         self.args_parser = ArgumentParser()
         self.args = self.args_parser.parse_args()
 
@@ -20,7 +22,14 @@ class TaskManager:
             return
 
         from ais_bench.benchmark.cli.workers import WORK_FLOW, WorkFlowExecutor
-        self.workflow = [worker_class(self.args) for worker_class in WORK_FLOW.get(self.args.mode)]
+        run_mode = self.args.mode
+        if run_mode == "perf" and self.args.reuse:
+            self.logger.warning(
+                "Detected --reuse in performance mode. The inference stage will be skipped, "
+                f"and performance metrics will be loaded from the reuse work dir."
+            )
+            run_mode = "perf_viz"
+        self.workflow = [worker_class(self.args) for worker_class in WORK_FLOW.get(run_mode)]
 
         # load config
         cfg = self.config_manager.load_config(self.workflow)

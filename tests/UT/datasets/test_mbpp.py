@@ -241,10 +241,11 @@ class TestMBPPEvaluator(unittest.TestCase):
 
     def test_score_mbppplus_import_error(self):
         """测试 MBPPPlus 导入错误"""
+        from ais_bench.benchmark.utils.logging.exceptions import AISBenchImportError
         evaluator = MBPPEvaluator.__new__(MBPPEvaluator)
         evaluator.metric = 'MBPPPlus'
         with patch.dict('sys.modules', {'evalplus': None, 'evalplus.data': None, 'evalplus.evaluate': None}):
-            with self.assertRaises(ImportError):
+            with self.assertRaises(AISBenchImportError):
                 evaluator.score(['pred'], ['ref'])
 
     @patch('ais_bench.benchmark.datasets.mbpp.tempfile.TemporaryDirectory')

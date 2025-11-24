@@ -118,7 +118,7 @@ work_dir = 'outputs/example_model/'
 
 ## AISBench插件安装使用（以样例为例）
 1. 安装AISBench工具
-参考[AISBench工具安装](https://github.com/AISBench/benchmark#-%E5%B7%A5%E5%85%B7%E5%AE%89%E8%A3%85)
+参考[AISBench工具安装](https://gitee.com/aisbench/benchmark#-%E5%B7%A5%E5%85%B7%E5%AE%89%E8%A3%85)
 2. 安装插件包：
 ```shell
 # 在当前README.md所在目录

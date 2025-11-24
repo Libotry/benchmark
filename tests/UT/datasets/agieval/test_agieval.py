@@ -301,8 +301,23 @@ class TestAGIEvalDatasetLoader(unittest.TestCase):
         if not MODULES_IMPORTED:
             self.skipTest("Required modules could not be imported")
     
-    def test_concat_prompt(self):
+    @patch('tiktoken.encoding_for_model')
+    def test_concat_prompt(self, mock_encoding_for_model):
         """测试concat_prompt函数"""
+        # Mock tiktoken 以避免网络请求和 SOCKS 代理问题
+        mock_enc = MagicMock()
+        # 模拟 encode 方法返回 token 数量（简单估算：每个字符约 0.3 个 token）
+        def mock_encode(text):
+            # 返回一个列表，长度约为文本长度的 1/3，但至少为 1
+            token_count = max(1, len(text) // 3)
+            return list(range(token_count))
+        mock_enc.encode = mock_encode
+        mock_encoding_for_model.return_value = mock_enc
+        
+        # 重置全局 enc 变量以确保使用 mock
+        from ais_bench.benchmark.datasets.agieval import dataset_loader
+        dataset_loader.enc = None
+        
         # 创建测试数据
         demos = [
             "This is demo 1",
@@ -321,6 +336,9 @@ class TestAGIEvalDatasetLoader(unittest.TestCase):
         self.assertGreater(len(result_en), 0)
         self.assertGreater(num_shot_en, 0)
         
+        # 重置全局 enc 变量以确保下次测试使用新的 mock
+        dataset_loader.enc = None
+        
         # 测试中文QA数据集
         result_zh, num_shot_zh = concat_prompt(
             demos=demos,
@@ -332,8 +350,23 @@ class TestAGIEvalDatasetLoader(unittest.TestCase):
         self.assertGreater(len(result_zh), 0)
         self.assertGreater(num_shot_zh, 0)
     
-    def test_concat_prompt_chat_mode(self):
+    @patch('tiktoken.encoding_for_model')
+    def test_concat_prompt_chat_mode(self, mock_encoding_for_model):
         """测试concat_prompt_chat_mode函数"""
+        # Mock tiktoken 以避免网络请求和 SOCKS 代理问题
+        mock_enc = MagicMock()
+        # 模拟 encode 方法返回 token 数量（简单估算：每个字符约 0.3 个 token）
+        def mock_encode(text):
+            # 返回一个列表，长度约为文本长度的 1/3，但至少为 1
+            token_count = max(1, len(text) // 3)
+            return list(range(token_count))
+        mock_enc.encode = mock_encode
+        mock_encoding_for_model.return_value = mock_enc
+        
+        # 重置全局 enc 变量以确保使用 mock
+        from ais_bench.benchmark.datasets.agieval import dataset_loader
+        dataset_loader.enc = None
+        
         # 创建测试数据
         demos = [
             ("User question 1", "Assistant answer 1"),
@@ -679,8 +712,9 @@ class TestAGIEvalDataset(unittest.TestCase):
         from ais_bench.benchmark.datasets.utils.datasets import get_data_path
         
         # 测试无效设置 - 使用一个不存在的路径来避免FileExistsError
+        from ais_bench.benchmark.utils.logging.exceptions import ParameterValueError
         with patch.object(get_data_path, '__call__', return_value='/nonexistent/path'):
-            with self.assertRaises(AssertionError):
+            with self.assertRaises(ParameterValueError):
                 AGIEvalDataset.load('/nonexistent/path', 'test_name', 'few-shot')
     
     def test_AGIEvalDataset_v2_load_models_cope(self):
