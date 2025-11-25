@@ -22,10 +22,7 @@ dapo_math_infer_cfg = dict(
 
 # Evaluation configuration: accuracy-based evaluation
 dapo_math_eval_cfg = dict(
-    evaluator=dict(type=DAPOMathEvaluator)  # ACC evaluator using ground_truth from reward_model
-)
-aime2024_eval_cfg = dict(
-    evaluator=dict(type=MATHEvaluator, version='v2'), pred_postprocessor=dict(type=dapo_math_postprocess)
+    evaluator=dict(type=DAPOMathEvaluator, version='v2'), pred_postprocessor=dict(type=dapo_math_postprocess)
 )
 
 # Dataset configuration
