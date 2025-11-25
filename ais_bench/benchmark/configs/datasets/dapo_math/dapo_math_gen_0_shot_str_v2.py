@@ -1,7 +1,8 @@
+from ais_bench.benchmark.datasets.dapo_math import DAPOMathEvaluatorV2
 from ais_bench.benchmark.openicl.icl_prompt_template import PromptTemplate
 from ais_bench.benchmark.openicl.icl_retriever import ZeroRetriever
 from ais_bench.benchmark.openicl.icl_inferencer import GenInferencer
-from ais_bench.benchmark.datasets import DAPOMathDataset, DAPOMathEvaluator, dapo_math_postprocess
+from ais_bench.benchmark.datasets import DAPOMathDataset, dapo_math_postprocess_v2
 
 # Reader configuration: specify input and output columns
 dapo_math_reader_cfg = dict(
@@ -13,7 +14,7 @@ dapo_math_reader_cfg = dict(
 dapo_math_infer_cfg = dict(
     prompt_template=dict(
         type=PromptTemplate,
-        template='{prompt}'  # Use the prompt directly as it already contains the full instruction
+        template='{prompt}\nPlease reason step by step, and put your final answer within \\boxed{}.'  # Use the prompt directly as it already contains the full instruction
     ),
     retriever=dict(type=ZeroRetriever),  # 0-shot: no retrieval
     inferencer=dict(type=GenInferencer)  # Generation-based inference for RL reasoning
@@ -21,7 +22,7 @@ dapo_math_infer_cfg = dict(
 
 # Evaluation configuration: accuracy-based evaluation
 dapo_math_eval_cfg = dict(
-    evaluator=dict(type=DAPOMathEvaluator), pred_postprocessor=dict(type=dapo_math_postprocess)
+    evaluator=dict(type=DAPOMathEvaluatorV2), pred_postprocessor=dict(type=dapo_math_postprocess_v2)
 )
 
 # Dataset configuration

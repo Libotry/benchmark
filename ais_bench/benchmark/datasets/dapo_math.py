@@ -143,13 +143,6 @@ def normalize_final_answer(final_answer: str) -> str:
     final_answer = re.sub(r"(\\textbf\{)(.*?)(\})", "\\2", final_answer)
     final_answer = re.sub(r"(\\overline\{)(.*?)(\})", "\\2", final_answer)
     final_answer = re.sub(r"(\\boxed\{)(.*)(\})", "\\2", final_answer)
-
-    # Normalize shorthand TeX:
-    #  \fracab -> \frac{a}{b}
-    #  \frac{abc}{bef} -> \frac{abc}{bef}
-    #  \fracabc -> \frac{a}{b}c
-    #  \sqrta -> \sqrt{a}
-    #  \sqrtab -> sqrt{a}b
     final_answer = re.sub(r"(frac)([^{])(.)", "frac{\\2}{\\3}", final_answer)
     final_answer = re.sub(r"(sqrt)([^{])", "sqrt{\\2}", final_answer)
     final_answer = final_answer.replace("$", "")
@@ -203,11 +196,11 @@ def extract_pred_by_strict_box(pred: str) -> Optional[str]:
 
 @TEXT_POSTPROCESSORS.register_module('dapo_math_postprocess')
 def dapo_math_postprocess(solution_str: str) -> str:
-    return extract_pred_by_strict_box(solution_str)
+    return extract_pred_by_minerva(solution_str)
 
 @TEXT_POSTPROCESSORS.register_module('dapo_math_postprocess_v2')
 def dapo_math_postprocess_v2(solution_str: str) -> str:
-    return extract_pred_by_minerva(solution_str)
+    return extract_pred_by_strict_box(solution_str)
 
 @LOAD_DATASET.register_module()
 class DAPOMathDataset(BaseDataset):
@@ -366,6 +359,29 @@ class DAPOMathDataset(BaseDataset):
 
 @ICL_EVALUATORS.register_module()
 class DAPOMathEvaluator(BaseEvaluator):
+
+    def __init__(self):
+        super().__init__()
+
+    def score(self, predictions, references):
+        if len(predictions) != len(references):
+            return {'error': 'preds and refrs have different length'}
+        correct = 0
+        count = 0
+        details = []
+        for i, j in zip(predictions, references):
+            j = normalize_final_answer(j)
+            detail = {'pred': i, 'answer': j, 'correct': False}
+            count += 1
+            if i == j:
+                correct += 1
+                detail['correct'] = True
+            details.append(detail)
+        result = {'accuracy': 100 * correct / count, 'details': details}
+        return result
+
+@ICL_EVALUATORS.register_module()
+class DAPOMathEvaluatorV2(BaseEvaluator):
 
     def __init__(self):
         super().__init__()
