@@ -1,5 +1,8 @@
 import os
 
+import re
+import signal
+
 from datasets import Dataset, DatasetDict
 
 from ais_bench.benchmark.openicl.icl_evaluator import BaseEvaluator
@@ -8,11 +11,203 @@ from ais_bench.benchmark.datasets.utils.datasets import get_data_path
 from ais_bench.benchmark.utils.logging.logger import AISLogger
 from ais_bench.benchmark.utils.logging.error_codes import DSET_CODES
 from ais_bench.benchmark.utils.logging.exceptions import AISBenchDataContentError
-
+from typing import Optional
 from .base import BaseDataset
+from ais_bench.benchmark.registry import TEXT_POSTPROCESSORS
 
 logger = AISLogger()
 
+def last_boxed_only_string(string: str) -> Optional[str]:
+    """Extract the last LaTeX boxed expression from a string.
+    
+    Args:
+        string: Input string containing LaTeX code
+        
+    Returns:
+        The last boxed expression or None if not found
+    """
+    idx = string.rfind("\\boxed{")
+    if idx < 0:
+        return None
+
+    i = idx
+    right_brace_idx = None
+    num_left_braces_open = 0
+
+    while i < len(string):
+        if string[i] == "{":
+            num_left_braces_open += 1
+        if string[i] == "}":
+            num_left_braces_open -= 1
+            if num_left_braces_open == 0:
+                right_brace_idx = i
+                break
+        i += 1
+
+    return string[idx:right_brace_idx + 1] if right_brace_idx is not None else None
+
+
+def remove_boxed(s: str) -> str:
+    """Remove the LaTeX boxed command from a string.
+    
+    Args:
+        s: String with format "\\boxed{content}"
+        
+    Returns:
+        The content inside the boxed command
+    """
+    left = "\\boxed{"
+    assert s[:len(left)] == left, f"box error: {s}"
+    assert s[-1] == "}", f"box error: {s}"
+    return s[len(left):-1]
+
+# Constants for normalization
+SUBSTITUTIONS = [
+    ("an ", ""),
+    ("a ", ""),
+    (".$", "$"),
+    ("\\$", ""),
+    (r"\ ", ""),
+    (" ", ""),
+    ("mbox", "text"),
+    (",\\text{and}", ","),
+    ("\\text{and}", ","),
+    ("\\text{m}", "\\text{}"),
+]
+
+REMOVED_EXPRESSIONS = [
+    "square",
+    "ways",
+    "integers",
+    "dollars",
+    "mph",
+    "inches",
+    "hours",
+    "km",
+    "units",
+    "\\ldots",
+    "sue",
+    "points",
+    "feet",
+    "minutes",
+    "digits",
+    "cents",
+    "degrees",
+    "cm",
+    "gm",
+    "pounds",
+    "meters",
+    "meals",
+    "edges",
+    "students",
+    "childrentickets",
+    "multiples",
+    "\\text{s}",
+    "\\text{.}",
+    "\\text{\ns}",
+    "\\text{}^2",
+    "\\text{}^3",
+    "\\text{\n}",
+    "\\text{}",
+    r"\mathrm{th}",
+    r"^\circ",
+    r"^{\circ}",
+    r"\;",
+    r",\!",
+    "{,}",
+    '"',
+    "\\dots",
+]
+
+
+def normalize_final_answer(final_answer: str) -> str:
+    """Normalize a final answer to a quantitative reasoning question.
+    
+    Args:
+        final_answer: The answer string to normalize
+        
+    Returns:
+        Normalized answer string
+    """
+    final_answer = final_answer.split("=")[-1]
+
+    # Apply substitutions and removals
+    for before, after in SUBSTITUTIONS:
+        final_answer = final_answer.replace(before, after)
+    for expr in REMOVED_EXPRESSIONS:
+        final_answer = final_answer.replace(expr, "")
+
+    # Extract and normalize LaTeX math
+    final_answer = re.sub(r"(.*?)(\$)(.*?)(\$)(.*)", "$\\3$", final_answer)
+    final_answer = re.sub(r"(\\text\{)(.*?)(\})", "\\2", final_answer)
+    final_answer = re.sub(r"(\\textbf\{)(.*?)(\})", "\\2", final_answer)
+    final_answer = re.sub(r"(\\overline\{)(.*?)(\})", "\\2", final_answer)
+    final_answer = re.sub(r"(\\boxed\{)(.*)(\})", "\\2", final_answer)
+
+    # Normalize shorthand TeX:
+    #  \fracab -> \frac{a}{b}
+    #  \frac{abc}{bef} -> \frac{abc}{bef}
+    #  \fracabc -> \frac{a}{b}c
+    #  \sqrta -> \sqrt{a}
+    #  \sqrtab -> sqrt{a}b
+    final_answer = re.sub(r"(frac)([^{])(.)", "frac{\\2}{\\3}", final_answer)
+    final_answer = re.sub(r"(sqrt)([^{])", "sqrt{\\2}", final_answer)
+    final_answer = final_answer.replace("$", "")
+
+    # Normalize numbers
+    if final_answer.replace(",", "").isdigit():
+        final_answer = final_answer.replace(",", "")
+
+    return final_answer.strip()
+
+
+def extract_pred_by_minerva(solution_str: str, answer_pattern: str = r"(?i)Answer\s*:\s*([^\n]+)") -> str:
+    """Check if the solution is correct according to Minerva criteria.
+    
+    Args:
+        solution_str: The solution string to check
+        gt: The ground truth answer
+        gt_need_extract: Whether the ground truth needs extraction
+        answer_pattern: Regex pattern to extract the answer
+        
+    Returns:
+        Tuple of (is_correct, normalized_prediction)
+    """
+    # Extract answer from solution
+    match = re.findall(answer_pattern, solution_str)
+    extracted_answer = match[-1] if match else "[INVALID]"
+    pred = normalize_final_answer(extracted_answer)
+
+    return pred
+
+
+def extract_pred_by_strict_box(pred: str) -> Optional[str]:
+    """Check if the prediction is correct using strict boxed answer criteria.
+    
+    Args:
+        pred: The prediction string
+        gt: The ground truth answer
+        pause_tokens_index: Indices of pause tokens
+        
+    Returns:
+        Tuple of (score, extracted_prediction)
+    """
+    # Extract the relevant part of the prediction
+    pred = pred[-100:]
+
+    # Extract and check the boxed answer
+    boxed_pred = last_boxed_only_string(pred)
+    extracted_pred = remove_boxed(boxed_pred) if boxed_pred is not None else None
+
+    return extracted_pred
+
+@TEXT_POSTPROCESSORS.register_module('dapo_math_postprocess')
+def dapo_math_postprocess(solution_str: str) -> str:
+    return extract_pred_by_strict_box(solution_str)
+
+@TEXT_POSTPROCESSORS.register_module('dapo_math_postprocess_v2')
+def dapo_math_postprocess_v2(solution_str: str) -> str:
+    return extract_pred_by_minerva(solution_str)
 
 @LOAD_DATASET.register_module()
 class DAPOMathDataset(BaseDataset):
@@ -169,92 +364,24 @@ class DAPOMathDataset(BaseDataset):
         
         return dataset_dict
 
-
 @ICL_EVALUATORS.register_module()
 class DAPOMathEvaluator(BaseEvaluator):
-    """DAPO-math-17k evaluator for accuracy-based evaluation.
-    
-    Evaluation method: ACC (Accuracy)
-    Each case's answer is taken from reward_model.ground_truth.
-    Metric: accuracy = correct_count / total_count
-    """
 
     def __init__(self):
         super().__init__()
 
-    def is_equal(self, pred, refer):
-        """Check if prediction matches reference.
-        
-        Args:
-            pred (str): Prediction string.
-            refer (str): Reference (ground truth) string.
-            
-        Returns:
-            bool: True if prediction matches reference.
-        """
-        # Simple string comparison (case-insensitive, stripped)
-        pred_str = str(pred).strip()
-        refer_str = str(refer).strip()
-        
-        # Exact match (case-insensitive)
-        if pred_str.lower() == refer_str.lower():
-            return True
-        
-        # Try numeric comparison if both are numeric
-        try:
-            pred_num = float(pred_str)
-            refer_num = float(refer_str)
-            # Allow small floating point differences
-            if abs(pred_num - refer_num) < 1e-6:
-                return True
-        except (ValueError, TypeError):
-            pass
-        
-        return False
-
     def score(self, predictions, references):
-        """Calculate accuracy score.
-        
-        Args:
-            predictions (List[str]): List of predictions.
-            references (List[str]): List of ground truth answers.
-            
-        Returns:
-            dict: Evaluation results with 'accuracy' and 'details'.
-        """
         if len(predictions) != len(references):
-            return {
-                'error': 'predictions and references have different length',
-                'predictions_len': len(predictions),
-                'references_len': len(references)
-            }
-        
+            return {'error': 'preds and refrs have different length'}
         correct = 0
         count = 0
         details = []
-        
-        for i, (pred, ref) in enumerate(zip(predictions, references)):
-            detail = {
-                'pred': pred,
-                'answer': ref,
-                'correct': False
-            }
+        for i, j in zip(predictions, references):
+            detail = {'pred': i, 'answer': j, 'correct': False}
             count += 1
-            
-            if self.is_equal(pred, ref):
+            if i == j:
                 correct += 1
                 detail['correct'] = True
-            
             details.append(detail)
-        
-        accuracy = 100.0 * correct / count if count > 0 else 0.0
-        
-        result = {
-            'accuracy': accuracy,
-            'correct': correct,
-            'total': count,
-            'details': details
-        }
-        
+        result = {'accuracy': 100 * correct / count, 'details': details}
         return result
-
