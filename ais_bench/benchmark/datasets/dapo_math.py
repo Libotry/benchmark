@@ -1,8 +1,6 @@
 import os
 
 import re
-import signal
-
 from datasets import Dataset, DatasetDict
 
 from ais_bench.benchmark.openicl.icl_evaluator import BaseEvaluator
@@ -155,16 +153,14 @@ def normalize_final_answer(final_answer: str) -> str:
 
 
 def extract_pred_by_minerva(solution_str: str, answer_pattern: str = r"(?i)Answer\s*:\s*([^\n]+)") -> str:
-    """Check if the solution is correct according to Minerva criteria.
+    """Extract and normalize the answer from a solution string based on Minerva criteria.
     
     Args:
-        solution_str: The solution string to check
-        gt: The ground truth answer
-        gt_need_extract: Whether the ground truth needs extraction
-        answer_pattern: Regex pattern to extract the answer
+        solution_str: The solution string to check.
+        answer_pattern: Regex pattern to extract the answer.
         
     Returns:
-        Tuple of (is_correct, normalized_prediction)
+        The normalized prediction string.
     """
     # Extract answer from solution
     match = re.findall(answer_pattern, solution_str)
@@ -174,23 +170,21 @@ def extract_pred_by_minerva(solution_str: str, answer_pattern: str = r"(?i)Answe
     return pred
 
 
-def extract_pred_by_strict_box(pred: str) -> Optional[str]:
-    """Check if the prediction is correct using strict boxed answer criteria.
+def extract_pred_by_strict_box(pred: str) -> str:
+    """Extract the answer from a prediction string using strict boxed answer criteria.
     
     Args:
-        pred: The prediction string
-        gt: The ground truth answer
-        pause_tokens_index: Indices of pause tokens
+        pred: The prediction string.
         
     Returns:
-        Tuple of (score, extracted_prediction)
+        The extracted prediction string from the last boxed expression, or None if not found.
     """
     # Extract the relevant part of the prediction
     pred = pred[-100:]
 
     # Extract and check the boxed answer
     boxed_pred = last_boxed_only_string(pred)
-    extracted_pred = remove_boxed(boxed_pred) if boxed_pred is not None else None
+    extracted_pred = remove_boxed(boxed_pred) if boxed_pred is not None else ""
 
     return extracted_pred
 
@@ -199,7 +193,7 @@ def dapo_math_postprocess(solution_str: str) -> str:
     return extract_pred_by_minerva(solution_str)
 
 @TEXT_POSTPROCESSORS.register_module('dapo_math_postprocess_v2')
-def dapo_math_postprocess_v2(solution_str: str) -> str:
+def dapo_math_postprocess_v2(solution_str: str) -> Optional[str]:
     return extract_pred_by_strict_box(solution_str)
 
 @LOAD_DATASET.register_module()
