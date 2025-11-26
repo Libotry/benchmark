@@ -1,7 +1,7 @@
 from ais_bench.benchmark.openicl.icl_prompt_template import PromptTemplate
 from ais_bench.benchmark.openicl.icl_retriever import ZeroRetriever
 from ais_bench.benchmark.openicl.icl_inferencer import GenInferencer
-from ais_bench.benchmark.datasets import DAPOMathDataset, DAPOMathEvaluator
+from ais_bench.benchmark.datasets import DAPOMathDataset, DAPOMathEvaluator, dapo_math_postprocess
 
 # Reader configuration: specify input and output columns
 dapo_math_reader_cfg = dict(
@@ -28,15 +28,15 @@ dapo_math_infer_cfg = dict(
 
 # Evaluation configuration: accuracy-based evaluation
 dapo_math_eval_cfg = dict(
-    evaluator=dict(type=DAPOMathEvaluator)  # ACC evaluator using ground_truth from reward_model
+    evaluator=dict(type=DAPOMathEvaluator), pred_postprocessor=dict(type=dapo_math_postprocess)
 )
 
 # Dataset configuration
 dapo_math_datasets = [
     dict(
-        abbr='dapo_math_17k',  # Dataset abbreviation
+        abbr='dapo-math-17k',  # Dataset abbreviation
         type=DAPOMathDataset,  # Dataset class
-        path='ais_bench/datasets/dapo_math_17k',  # Dataset path (relative to source root or absolute path)
+        path='ais_bench/datasets/dapo-math-17k',  # Dataset path (relative to source root or absolute path)
         # file_name='dapo-math-17k.parquet',  # Optional: specify file name if not using default
         reader_cfg=dapo_math_reader_cfg,
         infer_cfg=dapo_math_infer_cfg,

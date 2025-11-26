@@ -27,9 +27,9 @@ dapo_math_eval_cfg = dict(
 # Dataset configuration
 dapo_math_datasets = [
     dict(
-        abbr='dapo_math_17k',  # Dataset abbreviation
+        abbr='dapo-math-17k',  # Dataset abbreviation
         type=DAPOMathDataset,  # Dataset class
-        path='ais_bench/datasets/dapo_math_17k',  # Dataset path (relative to source root or absolute path)
+        path='ais_bench/datasets/dapo-math-17k',  # Dataset path (relative to source root or absolute path)
         # file_name='dapo-math-17k.parquet',  # Optional: specify file name if not using default
         reader_cfg=dapo_math_reader_cfg,
         infer_cfg=dapo_math_infer_cfg,
