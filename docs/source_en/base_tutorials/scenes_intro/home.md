@@ -9,6 +9,8 @@
   - **Model Tasks**: 📚 [Service-Oriented Inference Backend](../all_params/models.md#service-oriented-inference-backend)
   - **Dataset Tasks**: 📚 [Open-Source Datasets](../all_params/datasets.md#open-source-datasets) and 📚 [Custom Datasets](../all_params/datasets.md#custom-datasets)
 
+- **Constraint**: Currently, PPL mode accuracy evaluation tasks only support `vllm_api_general` and `vllm_api_general_chat` model configurations; other configurations are not supported.
+
 After selecting the **model task** and **dataset task** according to your usage needs, refer to the document for detailed usage of this scenario: 📚 [Service-Oriented Accuracy Evaluation Guide](accuracy_benchmark.md)
 
 #### Pure Model Accuracy Evaluation

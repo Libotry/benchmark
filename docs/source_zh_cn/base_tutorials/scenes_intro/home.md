@@ -11,6 +11,8 @@
 
     - **数据集任务**：📚 [开源数据集](../all_params/datasets.md#开源数据集) 与 📚 [自定义数据集](../all_params/datasets.md#自定义数据集)
 
+- 约束：当前PPL模式精度测评任务只支持`vllm_api_general`和`vllm_api_general_chat`两种模型配置，其他均不支持。
+
 依据使用需求选好**模型任务**和**数据集任务**后，此场景的具体使用方法详见文档：📚 [服务化精度测评指南](accuracy_benchmark.md)
 
 #### 纯模型精度测评
