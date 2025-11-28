@@ -2245,25 +2245,7 @@ class OCRBenchV2Dataset(BaseDataset):
         for i in sheet_indices:
             line = data.iloc[i]
             tgt_path = dump_image(line, image_root_path)
-
-            options = {
-                cand: line[cand]
-                for cand in string.ascii_uppercase
-                if cand in line and not pd.isna(line[cand])
-            }
-            options_prompt = 'Options:\n'
-            for key, item in options.items():
-                options_prompt += f'{key}. {item}\n'
-            
-            hint = line['hint'] if ('hint' in line and not pd.isna(line['hint'])) else None
-            # get text prompt 
-            prompt = ''
-            if hint is not None:
-                prompt += f'Hint: {hint}\n'
-            prompt += f'Question: {line["question"]}\n'
-            if len(options):
-                prompt += options_prompt
-                prompt += 'Please select the correct answer from the options above. \n'
+            prompt = line['question']
             # add image info
             msgs = []
             if isinstance(tgt_path, list):
@@ -2382,21 +2364,16 @@ class OCRBenchV2Evaluator(BaseEvaluator):
         special_characters = ['<|im_end|>']
         predict_result = []
         for pred, ref in zip(predictions, references):
-            if isinstance(ref, list):
-                refer = ref
-            elif isinstance(eval(ref), list):
-                refer = eval(ref)
-            else:
-                refer = list(ref)
+            refer = ref
             predict = str(pred) if pd.notna(pred) else ''
             answers = ast.literal_eval(refer['answer'])
             category = refer['category']
             questions = refer['question']
-            evals = refer['eval']
+            evals = refer['evals']
             bbox_raw = refer['bbox_raw']
             content_raw = refer['content']
             # Process bbox and content fields
-            bbox = ast.literal_eval(bbox_raw) if bbox_raw != 'without bbox' else bbox_raw
+            bbox = ast.literal_eval(bbox_raw) if bbox_raw != 'without bbox' and bbox_raw != None else bbox_raw 
             content = ast.literal_eval(content_raw) if content_raw != 'without content' else content_raw
             # Build result dictionary
             result_entry = {
@@ -2413,9 +2390,11 @@ class OCRBenchV2Evaluator(BaseEvaluator):
             predict_result.append(result_entry)
         res_data_list = process_predictions(predict_result)
         en_scores, cn_scores = ocrbench_v2_aggregate_accuracy(res_data_list)
-        score_en_overall = sum(en_scores.values()) / len(en_scores)
-        score_cn_overall = sum(cn_scores.values()) / len(cn_scores)
-        final_score_dict = {**en_scores, **cn_scores}
-        final_score_dict["English Overall Score"] = score_en_overall
-        final_score_dict["Chinese Overall Score"] = score_cn_overall
+        final_score_dict = {}
+        if len(en_scores) > 0:
+            score_en_overall = sum(en_scores.values()) / len(en_scores)
+            final_score_dict["English Overall Score"] = score_en_overall
+        if len(cn_scores) > 0:
+            score_cn_overall = sum(cn_scores.values()) / len(cn_scores)
+            final_score_dict["Chinese Overall Score"] = score_cn_overall
         return final_score_dict
