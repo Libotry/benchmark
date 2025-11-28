@@ -55,8 +55,16 @@ def remove_boxed(s: str) -> str:
         The content inside the boxed command
     """
     left = "\\boxed{"
-    assert s[:len(left)] == left, f"box error: {s}"
-    assert s[-1] == "}", f"box error: {s}"
+    if s[:len(left)] != left:
+        raise AISBenchDataContentError(
+            DSET_CODES.DATA_INVALID_STRUCTURE,
+            f"box error: {s}"
+        )
+    if s[-1] != "}":
+        raise AISBenchDataContentError(
+            DSET_CODES.DATA_INVALID_STRUCTURE,
+            f"box error: {s}"
+        )
     return s[len(left):-1]
 
 # Constants for normalization
