@@ -1,7 +1,7 @@
 from ais_bench.benchmark.openicl.icl_prompt_template.icl_prompt_template_mm import MMPromptTemplate
 from ais_bench.benchmark.openicl.icl_retriever import ZeroRetriever
 from ais_bench.benchmark.openicl.icl_inferencer import GenInferencer
-from ais_bench.benchmark.datasets import OCRBenchV2Dataset, OCRBenchV2Evaluator
+from ais_bench.benchmark.datasets.ocrbench_v2 import OCRBenchV2Dataset, OCRBenchV2Evaluator
 
 
 ocrbench_v2_reader_cfg = dict(
