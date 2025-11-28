@@ -2279,7 +2279,7 @@ class OCRBenchV2Dataset(BaseDataset):
             dataset.append({"content": content, 
                             "answer": {'choices': json.dumps(choices), 
                                         'question': line['question'],
-                                        'context': line['context'],
+                                        'content': line['content'],
                                         'answer': line['answer'],
                                         'split': line['split'] if 'split' in line else None,
                                         'category': line['category'] if 'category' in line else None,
