@@ -37,6 +37,11 @@ from datasets import Dataset
 from ais_bench.benchmark.openicl import BaseEvaluator
 from ais_bench.benchmark.registry import LOAD_DATASET
 from ais_bench.benchmark.utils.logging import AISLogger
+from ais_bench.benchmark.utils.logging.error_codes import DSET_CODES
+from ais_bench.benchmark.utils.logging.exceptions import (
+    AISBenchDataContentError, ParameterValueError, AISBenchValueError,
+    AISBenchRuntimeError, FileOperationError
+)
 from ais_bench.benchmark.datasets.utils.datasets import get_data_path, toliststr, process_line, get_content_str
 from ais_bench.benchmark.datasets.mmmu import dump_image
 
@@ -140,7 +145,11 @@ class TEDS(object):
     ''' Tree Edit Distance basead Similarity
     '''
     def __init__(self, structure_only=False, n_jobs=1, ignore_nodes=None):
-        assert isinstance(n_jobs, int) and (n_jobs >= 1), 'n_jobs must be an integer greather than 1'
+        if not isinstance(n_jobs, int) or n_jobs < 1:
+            raise ParameterValueError(
+                DSET_CODES.INVALID_PARAM_VALUE,
+                f'n_jobs must be an integer greater than 1, got {n_jobs}'
+            )
         self.structure_only = structure_only
         self.n_jobs = n_jobs
         self.ignore_nodes = ignore_nodes
@@ -417,7 +426,11 @@ def remove_text_tags(latex_str):
 def cn_math_expression_evaluation(predict, answers):
     score = 0
 
-    assert len(answers) == 1
+    if len(answers) != 1:
+        raise AISBenchDataContentError(
+            DSET_CODES.DATA_INVALID_STRUCTURE,
+            f"Expected exactly 1 answer, got {len(answers)}"
+        )
     answers = [remove_text_tags(answers[0])]
     predict = remove_text_tags(predict)
 
@@ -810,13 +823,16 @@ def generate_combinations(input_dict):
                 if not isinstance(kie_answer, dict):
                     kie_answer = ast.literal_eval(kie_answer)
             except (ValueError, SyntaxError):
-                print(f"Unable to parse 'answers' field: {kie_answer}")
+                logger.debug(f"Unable to parse 'answers' field: {kie_answer}")
                 return {}
 
         # Ensure the parsed result is a dictionary.
         if not isinstance(kie_answer, dict):
             print("Parsed 'answers' is still not a dictionary.")
-            raise ValueError("Input could not be parsed into a dictionary.")
+            raise AISBenchDataContentError(
+                DSET_CODES.DATA_LABEL_PARSE_ERROR,
+                "Input could not be parsed into a dictionary."
+            )
 
         keys = list(kie_answer.keys())
 
@@ -1003,7 +1019,11 @@ def process_predictions(predict_file):
                 if data_item["eval"] == "multiple choice":
                     if not isinstance(data_item["answers"], list):
                         data_item["answers"] = [data_item["answers"]]
-                    assert len(data_item["answers"]) == 1
+                    if len(data_item["answers"]) != 1:
+                        raise AISBenchDataContentError(
+                            DSET_CODES.DATA_INVALID_STRUCTURE,
+                            f"Expected exactly 1 answer for multiple choice evaluation, got {len(data_item['answers'])}"
+                        )
 
                     if not isinstance(data_item["predict"], str):
                         data_item["score"] = 0
@@ -1017,14 +1037,21 @@ def process_predictions(predict_file):
                 elif data_item["eval"] == "case sensitive":
                     data_item["score"] = vqa_evaluation_case_sensitive(data_item["predict"], data_item["answers"])
                 else:
-                    raise ValueError("No such evaluation method")
+                    raise ParameterValueError(
+                        DSET_CODES.INVALID_PARAM_VALUE,
+                        f"No such evaluation method: {data_item.get('eval', 'None')}"
+                    )
             else:
                 data_item["score"] = vqa_evaluation(data_item["predict"], data_item["answers"])
 
         elif data_item["type"] == "cognition VQA cn" or data_item["type"] == "reasoning VQA cn":
             if "eval" in data_item.keys():
                 if data_item["eval"] == "multiple choice":
-                    assert len(data_item["answers"]) == 1
+                    if len(data_item["answers"]) != 1:
+                        raise AISBenchDataContentError(
+                            DSET_CODES.DATA_INVALID_STRUCTURE,
+                            f"Expected exactly 1 answer for multiple choice evaluation, got {len(data_item['answers'])}"
+                        )
                     predict = ''.join(c for c in data_item["predict"] if c.isalpha())
 
                     if predict == data_item["answers"][0]:
@@ -1034,7 +1061,10 @@ def process_predictions(predict_file):
                 elif data_item["eval"] == "case sensitive":
                     data_item["score"] = vqa_evaluation_case_sensitive(data_item["predict"], data_item["answers"])
                 else:
-                    raise ValueError("No such evaluation method")
+                    raise ParameterValueError(
+                        DSET_CODES.INVALID_PARAM_VALUE,
+                        f"No such evaluation method: {data_item.get('eval', 'None')}"
+                    )
             else:
                 data_item["score"] = cn_vqa_evaluation(data_item["predict"], data_item["answers"])
 
@@ -1048,7 +1078,11 @@ def process_predictions(predict_file):
                     (1 - get_value_or_zero(ocr_metric["edit_dist"]))
                 ) / 4
             else:
-                assert len(data_item["answers"]) == 1
+                if len(data_item["answers"]) != 1:
+                    raise AISBenchDataContentError(
+                        DSET_CODES.DATA_INVALID_STRUCTURE,
+                        f"Expected exactly 1 answer for handwritten answer extraction, got {len(data_item['answers'])}"
+                    )
                 answer = data_item["answers"][0]
                 chars = list(answer)
                 if len(answer) > 1:
@@ -1134,7 +1168,10 @@ def process_predictions(predict_file):
                         gt_table_html = convert_markdown_table_to_html(data_item["answers"][0])
                         data_item["score"] = teds.evaluate(pred_table_html, gt_table_html)
             else:
-                raise ValueError
+                raise AISBenchDataContentError(
+                    DSET_CODES.DATA_INVALID_STRUCTURE,
+                    f"Expected answers to be a list with exactly 1 element for table parsing en, got {type(data_item['answers'])} with length {len(data_item['answers']) if isinstance(data_item['answers'], list) else 'N/A'}"
+                )
 
         elif data_item["type"] == "table parsing cn":
             if not isinstance(data_item["predict"], str):
@@ -1175,15 +1212,27 @@ def process_predictions(predict_file):
                 data_item["score"] = 0
 
         elif data_item["type"] == "document parsing en":
-            assert type(data_item["answers"])==list and len(data_item["answers"]) == 1
+            if not isinstance(data_item["answers"], list) or len(data_item["answers"]) != 1:
+                raise AISBenchDataContentError(
+                    DSET_CODES.DATA_INVALID_STRUCTURE,
+                    f"Expected answers to be a list with exactly 1 element for document parsing en, got {type(data_item['answers'])} with length {len(data_item['answers']) if isinstance(data_item['answers'], list) else 'N/A'}"
+                )
             data_item["score"] = doc_parsing_evaluation(data_item["predict"], data_item["answers"][0])
 
         elif data_item["type"] == "document parsing cn":
-            assert type(data_item["answers"])==list and len(data_item["answers"]) == 1
+            if not isinstance(data_item["answers"], list) or len(data_item["answers"]) != 1:
+                raise AISBenchDataContentError(
+                    DSET_CODES.DATA_INVALID_STRUCTURE,
+                    f"Expected answers to be a list with exactly 1 element for document parsing cn, got {type(data_item['answers'])} with length {len(data_item['answers']) if isinstance(data_item['answers'], list) else 'N/A'}"
+                )
             data_item["score"] = doc_parsing_evaluation(data_item["predict"], data_item["answers"][0])
 
         elif data_item["type"] == "key information extraction en" or data_item["type"] == "key information mapping en":
-            assert len(data_item["answers"]) == 1
+            if len(data_item["answers"]) != 1:
+                raise AISBenchDataContentError(
+                    DSET_CODES.DATA_INVALID_STRUCTURE,
+                    f"Expected exactly 1 answer for key information extraction/mapping en, got {len(data_item['answers'])}"
+                )
             answers = generate_combinations(data_item["answers"][0])
 
             if type(answers)==list and len(answers) == 1:
@@ -1203,7 +1252,11 @@ def process_predictions(predict_file):
                 data_item["score"] = max_score
 
         elif data_item["type"] == "key information extraction cn":
-            assert len(data_item["answers"]) == 1
+            if len(data_item["answers"]) != 1:
+                raise AISBenchDataContentError(
+                    DSET_CODES.DATA_INVALID_STRUCTURE,
+                    f"Expected exactly 1 answer for key information extraction cn, got {len(data_item['answers'])}"
+                )
             answers = ast.literal_eval(data_item["answers"][0])
             answers = {k: v if isinstance(v, list) else [v] for k, v in answers.items()}
             answers = generate_combinations(answers)
@@ -1296,7 +1349,10 @@ def process_predictions(predict_file):
                     data_item["score"] = spotting_evaluation(predict_bbox, data_item)
 
         else:
-            raise ValueError("Unknown task type!")
+            raise ParameterValueError(
+                DSET_CODES.INVALID_PARAM_VALUE,
+                "Unknown task type!"
+            )
 
         res_data_list.append(data_item)
 
@@ -1407,8 +1463,11 @@ def load_zip_file(file,fileNameRegExp='',allEntries=False):
     """
     try:
         archive=zipfile.ZipFile(file, mode='r', allowZip64=True)
-    except :
-        raise Exception('Error loading the ZIP archive')
+    except Exception as e:
+        raise FileOperationError(
+            DSET_CODES.FILE_READ_ERROR,
+            f'Error loading the ZIP archive: {str(e)}'
+        )
 
     pairs = []
     for name in archive.namelist():
@@ -1426,15 +1485,24 @@ def load_zip_file(file,fileNameRegExp='',allEntries=False):
             pairs.append( [ keyName , archive.read(name)] )
         else:
             if allEntries:
-                raise Exception('ZIP entry not valid: %s' %name)
+                raise AISBenchDataContentError(
+                    DSET_CODES.FILE_FORMAT_ERROR,
+                    f'ZIP entry not valid: {name}'
+                )
 
     return dict(pairs)
 
 def validate_point_inside_bounds(x,y,imWidth,imHeight):
     if(x<0 or x>imWidth):
-            raise Exception("X value (%s) not valid. Image dimensions: (%s,%s)" %(x,imWidth,imHeight))
+            raise AISBenchDataContentError(
+                DSET_CODES.DATA_INVALID_STRUCTURE,
+                f"X value ({x}) not valid. Image dimensions: ({imWidth},{imHeight})"
+            )
     if(y<0 or y>imHeight):
-            raise Exception("Y value (%s)  not valid. Image dimensions: (%s,%s)" %(y,imWidth,imHeight))
+            raise AISBenchDataContentError(
+                DSET_CODES.DATA_INVALID_STRUCTURE,
+                f"Y value ({y}) not valid. Image dimensions: ({imWidth},{imHeight})"
+            )
 
 def validate_clockwise_points(points):
     """
@@ -1444,7 +1512,10 @@ def validate_clockwise_points(points):
     for i in range(len(points)//2):
         edge.append( (int(points[(i+1)*2 % len(points)]) - int(points[i*2])) * (int(points[ ((i+1)*2+1) % len(points)]) + int(points[i*2+1]))   )
     if sum(edge)>0:
-        raise Exception("Points are not clockwise. The coordinates of bounding points have to be given in clockwise order. Regarding the correct interpretation of 'clockwise' remember that the image coordinate system used is the standard one, with the image origin at the upper left, the X axis extending to the right and Y axis extending downwards.")
+        raise AISBenchDataContentError(
+            DSET_CODES.DATA_INVALID_STRUCTURE,
+            "Points are not clockwise. The coordinates of bounding points have to be given in clockwise order. Regarding the correct interpretation of 'clockwise' remember that the image coordinate system used is the standard one, with the image origin at the upper left, the X axis extending to the right and Y axis extending downwards."
+        )
 
 
 def get_tl_line_values(line,LTRB=True,withTranscription=False,withConfidence=False,imWidth=0,imHeight=0):
@@ -1470,28 +1541,46 @@ def get_tl_line_values(line,LTRB=True,withTranscription=False,withConfidence=Fal
             m = re.match(r'^\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-1].?[0-9]*)\s*,(.*)$',line)
             if m == None :
                 m = re.match(r'^\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-1].?[0-9]*)\s*,(.*)$',line)
-                raise Exception("Format incorrect. Should be: xmin,ymin,xmax,ymax,confidence,transcription")
+                raise AISBenchDataContentError(
+                    DSET_CODES.FILE_FORMAT_ERROR,
+                    "Format incorrect. Should be: xmin,ymin,xmax,ymax,confidence,transcription"
+                )
         elif withConfidence:
             m = re.match(r'^\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-1].?[0-9]*)\s*$',line)
             if m == None :
-                raise Exception("Format incorrect. Should be: xmin,ymin,xmax,ymax,confidence")
+                raise AISBenchDataContentError(
+                    DSET_CODES.FILE_FORMAT_ERROR,
+                    "Format incorrect. Should be: xmin,ymin,xmax,ymax,confidence"
+                )
         elif withTranscription:
             m = re.match(r'^\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,(.*)$',line)
             if m == None :
-                raise Exception("Format incorrect. Should be: xmin,ymin,xmax,ymax,transcription")
+                raise AISBenchDataContentError(
+                    DSET_CODES.FILE_FORMAT_ERROR,
+                    "Format incorrect. Should be: xmin,ymin,xmax,ymax,transcription"
+                )
         else:
             m = re.match(r'^\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*([0-9]+)\s*,\s*([0-9]+)\s*,?\s*$',line)
             if m == None :
-                raise Exception("Format incorrect. Should be: xmin,ymin,xmax,ymax")
+                raise AISBenchDataContentError(
+                    DSET_CODES.FILE_FORMAT_ERROR,
+                    "Format incorrect. Should be: xmin,ymin,xmax,ymax"
+                )
 
         xmin = int(m.group(1))
         ymin = int(m.group(2))
         xmax = int(m.group(3))
         ymax = int(m.group(4))
         if(xmax<xmin):
-                raise Exception("Xmax value (%s) not valid (Xmax < Xmin)." %(xmax))
+                raise AISBenchDataContentError(
+                    DSET_CODES.DATA_INVALID_STRUCTURE,
+                    "Xmax value (%s) not valid (Xmax < Xmin)." %(xmax)
+                )
         if(ymax<ymin):
-                raise Exception("Ymax value (%s)  not valid (Ymax < Ymin)." %(ymax))
+                raise AISBenchDataContentError(
+                    DSET_CODES.DATA_INVALID_STRUCTURE,
+                    "Ymax value (%s)  not valid (Ymax < Ymin)." %(ymax)
+                )
 
         points = [ float(m.group(i)) for i in range(1, (numPoints+1) ) ]
 
@@ -1506,19 +1595,31 @@ def get_tl_line_values(line,LTRB=True,withTranscription=False,withConfidence=Fal
         if withTranscription and withConfidence:
             m = re.match(r'^\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*([0-1].?[0-9]*)\s*,(.*)$',line)
             if m == None :
-                raise Exception("Format incorrect. Should be: x1,y1,x2,y2,x3,y3,x4,y4,confidence,transcription")
+                raise AISBenchDataContentError(
+                    DSET_CODES.FILE_FORMAT_ERROR,
+                    "Format incorrect. Should be: x1,y1,x2,y2,x3,y3,x4,y4,confidence,transcription"
+                )
         elif withConfidence:
             m = re.match(r'^\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*([0-1].?[0-9]*)\s*$',line)
             if m == None :
-                raise Exception("Format incorrect. Should be: x1,y1,x2,y2,x3,y3,x4,y4,confidence")
+                raise AISBenchDataContentError(
+                    DSET_CODES.FILE_FORMAT_ERROR,
+                    "Format incorrect. Should be: x1,y1,x2,y2,x3,y3,x4,y4,confidence"
+                )
         elif withTranscription:
             m = re.match(r'^\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,(.*)$',line)
             if m == None :
-                raise Exception("Format incorrect. Should be: x1,y1,x2,y2,x3,y3,x4,y4,transcription")
+                raise AISBenchDataContentError(
+                    DSET_CODES.FILE_FORMAT_ERROR,
+                    "Format incorrect. Should be: x1,y1,x2,y2,x3,y3,x4,y4,transcription"
+                )
         else:
             m = re.match(r'^\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*,\s*(-?[0-9]+)\s*$',line)
             if m == None :
-                raise Exception("Format incorrect. Should be: x1,y1,x2,y2,x3,y3,x4,y4")
+                raise AISBenchDataContentError(
+                    DSET_CODES.FILE_FORMAT_ERROR,
+                    "Format incorrect. Should be: x1,y1,x2,y2,x3,y3,x4,y4"
+                )
 
         points = [ float(m.group(i)) for i in range(1, (numPoints+1) ) ]
 
@@ -1535,7 +1636,10 @@ def get_tl_line_values(line,LTRB=True,withTranscription=False,withConfidence=Fal
         try:
             confidence = float(m.group(numPoints+1))
         except ValueError:
-            raise Exception("Confidence value must be a float")
+            raise AISBenchDataContentError(
+                DSET_CODES.INVALID_DATA_TYPE,
+                "Confidence value must be a float"
+            )
 
     if withTranscription:
         posTranscription = numPoints + (2 if withConfidence else 1)
@@ -1571,7 +1675,10 @@ def validate_lines_in_file(fileName,file_contents,CRLF=True,LTRB=True,withTransc
     """
     utf8File = decode_utf8(file_contents)
     if (utf8File is None) :
-        raise Exception("The file %s is not UTF-8" %fileName)
+        raise FileOperationError(
+            DSET_CODES.FILE_READ_ERROR,
+            "The file %s is not UTF-8" %fileName
+        )
 
     lines = utf8File.split( "\r\n" if CRLF else "\n" )
     for line in lines:
@@ -1580,7 +1687,10 @@ def validate_lines_in_file(fileName,file_contents,CRLF=True,LTRB=True,withTransc
             try:
                 validate_tl_line(line,LTRB,withTranscription,withConfidence,imWidth,imHeight)
             except Exception as e:
-                raise Exception(("Line in sample not valid. Sample: %s Line: %s Error: %s" %(fileName,line,str(e))).encode('utf-8', 'replace'))
+                raise AISBenchDataContentError(
+                    DSET_CODES.DATA_INVALID_STRUCTURE,
+                    "Line in sample not valid. Sample: %s Line: %s Error: %s" %(fileName,line,str(e))
+                )
 
 def validate_data(gtFilePath, submFilePath, evaluationParams):
     """
@@ -1599,7 +1709,10 @@ def validate_data(gtFilePath, submFilePath, evaluationParams):
     #Validate format of results
     for k in subm:
         if (k in gt) == False :
-            raise Exception("The sample %s not present in GT" %k)
+            raise AISBenchDataContentError(
+                DSET_CODES.DATA_MISSING_REQUIRED_FIELD,
+                "The sample %s not present in GT" %k
+            )
 
         validate_lines_in_file(k,subm[k],evaluationParams['CRLF'],evaluationParams['LTRB'],True,evaluationParams['CONFIDENCES'])
 
@@ -1911,7 +2024,10 @@ def evaluate_method(gtFilePath, submFilePath, evaluationParams):
 
         gtFile = decode_utf8(gt[resFile])
         if (gtFile is None) :
-            raise Exception("The file %s is not UTF-8" %resFile)
+            raise FileOperationError(
+                DSET_CODES.FILE_READ_ERROR,
+                "The file %s is not UTF-8" %resFile
+            )
 
         recall = 0
         precision = 0
@@ -2281,7 +2397,11 @@ def ocrbench_v2_aggregate_accuracy(data_list):
     res_list = []
     for item in data_list:
         if "ignore" in item.keys():
-            assert item["ignore"] == "True"
+            if item["ignore"] != "True":
+                raise AISBenchDataContentError(
+                    DSET_CODES.DATA_INVALID_STRUCTURE,
+                    "Invalid ignore value: %s, expected 'True'" % item["ignore"]
+                )
 
         elif item["type"] == "text recognition en" or item["type"] == "fine-grained text recognition en" or item["type"] == "full-page OCR en":
             en_text_recognition_list.append(item["score"])
@@ -2326,7 +2446,10 @@ def ocrbench_v2_aggregate_accuracy(data_list):
             cn_knowledge_reasoning_list.append(item["score"])
 
         else:
-            raise ValueError("Unknown task type!")
+            raise ParameterValueError(
+                DSET_CODES.INVALID_PARAM_VALUE,
+                "Unknown task type!"
+            )
 
     en_scores = {
         "en_text_recognition": en_text_recognition_list,
