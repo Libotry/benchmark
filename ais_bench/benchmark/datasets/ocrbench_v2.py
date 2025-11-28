@@ -293,7 +293,7 @@ def split_OCRBenchV2(msgs):
         if i == 0:
             continue
         if not seg[0].isdigit() or seg[1] != '>':
-            logger.warning("Invalid text seg, please check it!")
+            logger.debug("Invalid text seg, please check it!")
         image_idx = int(seg[0]) - 1
         segs.append(dict(type="image_url", image_url=images[image_idx]))
         segs.append(dict(type="text", text=seg[2:]))
@@ -828,7 +828,7 @@ def generate_combinations(input_dict):
 
         # Ensure the parsed result is a dictionary.
         if not isinstance(kie_answer, dict):
-            print("Parsed 'answers' is still not a dictionary.")
+            logger.debug("Parsed 'answers' is still not a dictionary.")
             raise AISBenchDataContentError(
                 DSET_CODES.DATA_LABEL_PARSE_ERROR,
                 "Input could not be parsed into a dictionary."
@@ -1193,9 +1193,9 @@ def process_predictions(predict_file):
                     gold_table_html = wrap_html_table(data_item["answers"][0])
                     try:
                         data_item["score"] = teds.evaluate(pred_table_html, gold_table_html)
-                    except:
+                    except Exception as err:
                         data_item["score"] = 0
-                        print("error")
+                        logger.debug(f"TEDS evaluation failed: {err}")
 
         elif data_item["type"] == "chart parsing en":
             answer = data_item["answers"][0]
