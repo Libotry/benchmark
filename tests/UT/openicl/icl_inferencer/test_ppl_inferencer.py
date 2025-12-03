@@ -85,10 +85,27 @@ class DummyStatusCounter:
         pass
 
 
+@mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
+@mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
 class TestPPLInferencer(unittest.TestCase):
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_init_normal(self, m_abbr, m_build):
+    """测试PPLInferencer类，使用类级别的mock优化性能"""
+
+    def setUp(self):
+        """统一初始化，复用事件循环以提高性能"""
+        # 创建新的事件循环，避免警告
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+
+    def tearDown(self):
+        """清理事件循环"""
+        if hasattr(self, 'loop'):
+            self.loop.close()
+
+    def run_async(self, coro):
+        """辅助方法：运行异步测试，复用事件循环"""
+        return self.loop.run_until_complete(coro)
+
+    def test_init_normal(self, m_build, m_abbr):
         """测试PPLInferencer正常初始化"""
         m_build.return_value = DummyModel()
         inf = PPLInferencer(model_cfg={}, batch_size=1, mode="infer")
@@ -97,36 +114,28 @@ class TestPPLInferencer(unittest.TestCase):
         self.assertIsNotNone(inf.output_handler)
         self.assertIsNone(inf.labels)
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_init_with_labels(self, m_abbr, m_build):
+    def test_init_with_labels(self, m_build, m_abbr):
         """测试PPLInferencer使用自定义labels初始化"""
         m_build.return_value = DummyModel()
         labels = ["X", "Y", "Z"]
         inf = PPLInferencer(model_cfg={}, batch_size=1, labels=labels)
         self.assertEqual(inf.labels, labels)
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_init_perf_mode_error(self, m_abbr, m_build):
+    def test_init_perf_mode_error(self, m_build, m_abbr):
         """测试PPLInferencer在perf模式下应该抛出错误"""
         m_build.return_value = DummyModel()
         with self.assertRaises(AISBenchValueError) as ctx:
             PPLInferencer(model_cfg={}, batch_size=1, mode="perf")
         self.assertEqual(ctx.exception.error_code_str, ICLI_CODES.PERF_MODE_NOT_SUPPORTED_FOR_PPL_INFERENCE.full_code)
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_init_stream_mode_error(self, m_abbr, m_build):
+    def test_init_stream_mode_error(self, m_build, m_abbr):
         """测试PPLInferencer在stream模式下应该抛出错误"""
         m_build.return_value = DummyModel()
         with self.assertRaises(AISBenchValueError) as ctx:
             PPLInferencer(model_cfg={"stream": True}, batch_size=1)
         self.assertEqual(ctx.exception.error_code_str, ICLI_CODES.STREAM_MODE_NOT_SUPPORTED_FOR_PPL_INFERENCE.full_code)
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_get_data_list_normal(self, m_abbr, m_build):
+    def test_get_data_list_normal(self, m_build, m_abbr):
         """测试get_data_list正常情况"""
         m_build.return_value = DummyModel()
         inf = PPLInferencer(model_cfg={}, batch_size=1)
@@ -142,9 +151,7 @@ class TestPPLInferencer(unittest.TestCase):
         self.assertIn("B", data_list[0]["qa"])
         self.assertEqual(data_list[0]["max_out_len"], 4)  # model.max_out_len
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_get_data_list_with_max_out_len(self, m_abbr, m_build):
+    def test_get_data_list_with_max_out_len(self, m_build, m_abbr):
         """测试get_data_list使用dataset指定的max_out_len"""
         dataset = DummyDataset()
         dataset.reader = type("R", (), {
@@ -159,18 +166,14 @@ class TestPPLInferencer(unittest.TestCase):
         self.assertEqual(data_list[0]["max_out_len"], 5)
         self.assertEqual(data_list[1]["max_out_len"], 6)
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_calc_prediction_empty_list(self, m_abbr, m_build):
+    def test_calc_prediction_empty_list(self, m_build, m_abbr):
         """测试_calc_prediction处理空列表"""
         m_build.return_value = DummyModel()
         inf = PPLInferencer(model_cfg={}, batch_size=1)
         result = inf._calc_prediction([])
         self.assertIsNone(result)
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_calc_prediction_single_item(self, m_abbr, m_build):
+    def test_calc_prediction_single_item(self, m_build, m_abbr):
         """测试_calc_prediction处理单个选项"""
         m_build.return_value = DummyModel()
         inf = PPLInferencer(model_cfg={}, batch_size=1)
@@ -178,9 +181,7 @@ class TestPPLInferencer(unittest.TestCase):
         result = inf._calc_prediction(ppl_list)
         self.assertEqual(result, "A")
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_calc_prediction_multiple_items(self, m_abbr, m_build):
+    def test_calc_prediction_multiple_items(self, m_build, m_abbr):
         """测试_calc_prediction处理多个选项，选择最小PPL"""
         m_build.return_value = DummyModel()
         inf = PPLInferencer(model_cfg={}, batch_size=1)
@@ -192,9 +193,7 @@ class TestPPLInferencer(unittest.TestCase):
         result = inf._calc_prediction(ppl_list)
         self.assertEqual(result, "B")
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_calc_prediction_equal_ppl(self, m_abbr, m_build):
+    def test_calc_prediction_equal_ppl(self, m_build, m_abbr):
         """测试_calc_prediction处理相同PPL值（选择第一个）"""
         m_build.return_value = DummyModel()
         inf = PPLInferencer(model_cfg={}, batch_size=1)
@@ -205,9 +204,7 @@ class TestPPLInferencer(unittest.TestCase):
         result = inf._calc_prediction(ppl_list)
         self.assertEqual(result, "A")
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_do_request_success(self, m_abbr, m_build):
+    def test_do_request_success(self, m_build, m_abbr):
         """测试do_request成功情况"""
         m_build.return_value = DummyModel()
         inf = PPLInferencer(model_cfg={}, batch_size=1)
@@ -245,11 +242,9 @@ class TestPPLInferencer(unittest.TestCase):
             self.assertIsNotNone(resp_output.content)
             self.assertEqual(len(resp_output.label_ppl_list), 2)
 
-        asyncio.run(run_test())
+        self.run_async(run_test())
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_do_request_partial_failure(self, m_abbr, m_build):
+    def test_do_request_partial_failure(self, m_build, m_abbr):
         """测试do_request部分失败情况（某个选项失败）"""
         m_build.return_value = DummyModel()
         inf = PPLInferencer(model_cfg={}, batch_size=1)
@@ -301,11 +296,9 @@ class TestPPLInferencer(unittest.TestCase):
             # 只有第一个成功的被添加到列表
             self.assertEqual(len(resp_output.label_ppl_list), 1)
 
-        asyncio.run(run_test())
+        self.run_async(run_test())
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_do_request_all_failure(self, m_abbr, m_build):
+    def test_do_request_all_failure(self, m_build, m_abbr):
         """测试do_request全部失败情况"""
         m_build.return_value = DummyModel()
         inf = PPLInferencer(model_cfg={}, batch_size=1)
@@ -347,11 +340,9 @@ class TestPPLInferencer(unittest.TestCase):
             self.assertIsNone(resp_output.content)
             self.assertEqual(len(resp_output.label_ppl_list), 0)
 
-        asyncio.run(run_test())
+        self.run_async(run_test())
 
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
-    @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
-    def test_do_request_with_failed_ppl(self, m_abbr, m_build):
+    def test_do_request_with_failed_ppl(self, m_build, m_abbr):
         """测试do_request中output.success为False时使用0作为ppl"""
         m_build.return_value = DummyModel()
         inf = PPLInferencer(model_cfg={}, batch_size=1)
@@ -392,7 +383,7 @@ class TestPPLInferencer(unittest.TestCase):
             self.assertFalse(resp_output.success)
             self.assertEqual(len(resp_output.label_ppl_list), 0)
 
-        asyncio.run(run_test())
+        self.run_async(run_test())
 
 
 if __name__ == '__main__':

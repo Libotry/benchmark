@@ -129,9 +129,7 @@ class TestBaseApiInferencer(unittest.TestCase):
     @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
     @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
     def test_get_single_data(self, m_abbr, m_build):
-        """测试_get_single_data方法从共享内存读取数据并重置DATA_INDEX"""
-        from ais_bench.benchmark.tasks.utils import MESSAGE_INFO
-
+        """测试_get_single_data方法从共享内存读取数据"""
         m_build.return_value = DummyModel()
         inf = ConcreteApiInferencer(model_cfg={})
 
@@ -139,99 +137,72 @@ class TestBaseApiInferencer(unittest.TestCase):
         pickled_data = pickle.dumps(test_data)
 
         dataset_shm = shared_memory.SharedMemory(create=True, size=len(pickled_data))
-        from ais_bench.benchmark.tasks.utils import MESSAGE_SIZE
-        message_shm = shared_memory.SharedMemory(create=True, size=MESSAGE_SIZE)
 
         try:
             dataset_shm.buf[:len(pickled_data)] = pickled_data
 
-            message_buf = message_shm.buf
-            message_buf[:] = b'\x00' * MESSAGE_SIZE
-            struct.pack_into("B", message_buf, MESSAGE_INFO.DATA_SYNC_FLAG[0], 1)
-            struct.pack_into("i", message_buf, MESSAGE_INFO.DATA_INDEX[0], 0)
-
             indexes = {0: (0, 0, len(pickled_data))}
-            stop_event = threading.Event()
 
-            result = inf._get_single_data(dataset_shm, indexes, message_shm, stop_event)
+            result = inf._get_single_data(dataset_shm, indexes)
             self.assertEqual(result, test_data)
-            data_index = struct.unpack("i", message_buf[MESSAGE_INFO.DATA_INDEX[0]:MESSAGE_INFO.DATA_INDEX[1]])[0]
-            self.assertEqual(data_index, -1)
+            # 当只有一个索引时，global_index 会回到 0（因为取模运算）
+            self.assertEqual(inf.global_index.value, 0)
         finally:
             dataset_shm.close()
             dataset_shm.unlink()
-            message_shm.close()
-            message_shm.unlink()
 
     @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
     @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
     def test_get_single_data_wait_flag(self, m_abbr, m_build):
-        """测试_get_single_data方法等待DATA_SYNC_FLAG变为1"""
-        from ais_bench.benchmark.tasks.utils import MESSAGE_INFO, MESSAGE_SIZE
-
+        """测试_get_single_data方法从共享内存读取多个数据"""
         m_build.return_value = DummyModel()
         inf = ConcreteApiInferencer(model_cfg={})
 
-        test_data = {"test": "data"}
-        pickled_data = pickle.dumps(test_data)
+        test_data1 = {"test": "data1"}
+        test_data2 = {"test": "data2"}
+        pickled_data1 = pickle.dumps(test_data1)
+        pickled_data2 = pickle.dumps(test_data2)
+        total_size = len(pickled_data1) + len(pickled_data2)
 
-        dataset_shm = shared_memory.SharedMemory(create=True, size=len(pickled_data))
-        message_shm = shared_memory.SharedMemory(create=True, size=MESSAGE_SIZE)
+        dataset_shm = shared_memory.SharedMemory(create=True, size=total_size)
 
         try:
-            dataset_shm.buf[:len(pickled_data)] = pickled_data
+            # 写入两个数据
+            dataset_shm.buf[:len(pickled_data1)] = pickled_data1
+            dataset_shm.buf[len(pickled_data1):len(pickled_data1) + len(pickled_data2)] = pickled_data2
 
-            message_buf = message_shm.buf
-            message_buf[:] = b'\x00' * MESSAGE_SIZE
-            struct.pack_into("B", message_buf, MESSAGE_INFO.DATA_SYNC_FLAG[0], 0)
-            struct.pack_into("i", message_buf, MESSAGE_INFO.DATA_INDEX[0], -1)
+            indexes = {
+                0: (0, 0, len(pickled_data1)),
+                1: (1, len(pickled_data1), len(pickled_data2))
+            }
 
-            indexes = {0: (0, 0, len(pickled_data))}
-
-            def update_flag():
-                time.sleep(0.05)
-                struct.pack_into("B", message_buf, MESSAGE_INFO.DATA_SYNC_FLAG[0], 1)
-                struct.pack_into("i", message_buf, MESSAGE_INFO.DATA_INDEX[0], 0)
-
-            update_thread = threading.Thread(target=update_flag, daemon=True)
-            update_thread.start()
-
-            stop_event = threading.Event()
-            result = inf._get_single_data(dataset_shm, indexes, message_shm, stop_event)
-            self.assertEqual(result, test_data)
-
-            update_thread.join(timeout=1)
+            # 第一次调用应该返回第一个数据
+            result1 = inf._get_single_data(dataset_shm, indexes)
+            self.assertEqual(result1, test_data1)
+            # 第二次调用应该返回第二个数据
+            result2 = inf._get_single_data(dataset_shm, indexes)
+            self.assertEqual(result2, test_data2)
         finally:
             dataset_shm.close()
             dataset_shm.unlink()
-            message_shm.close()
-            message_shm.unlink()
 
     @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
     @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
     def test_get_single_data_with_none_index(self, m_abbr, m_build):
         """测试_get_single_data方法在index_data为None时返回None"""
-        from ais_bench.benchmark.tasks.utils import MESSAGE_INFO, MESSAGE_SIZE
-
         m_build.return_value = DummyModel()
         inf = ConcreteApiInferencer(model_cfg={})
 
-        message_shm = shared_memory.SharedMemory(create=True, size=MESSAGE_SIZE)
+        dataset_shm = shared_memory.SharedMemory(create=True, size=100)
 
         try:
-            message_buf = message_shm.buf
-            message_buf[:] = b'\x00' * MESSAGE_SIZE
-            struct.pack_into("B", message_buf, MESSAGE_INFO.DATA_SYNC_FLAG[0], 1)
-            struct.pack_into("i", message_buf, MESSAGE_INFO.DATA_INDEX[0], 0)
-
             indexes = {0: None}
-            stop_event = threading.Event()
 
-            result = inf._get_single_data(mock.Mock(), indexes, message_shm, stop_event)
+            result = inf._get_single_data(dataset_shm, indexes)
             self.assertIsNone(result)
         finally:
-            message_shm.close()
-            message_shm.unlink()
+            dataset_shm.close()
+            dataset_shm.unlink()
 
     @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
     @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.model_abbr_from_cfg", return_value="mabbr")
@@ -377,7 +348,7 @@ class TestBaseApiInferencer(unittest.TestCase):
         inf._get_single_data = mock.Mock(side_effect=[test_data, test_data, None])
 
         try:
-            inf._fill_janus_queue(mock.Mock(), mock.Mock(), {}, janus_queue, stop_event)
+            inf._fill_janus_queue(mock.Mock(), {}, janus_queue, stop_event)
             self.assertGreaterEqual(janus_queue.sync_q.qsize(), 0)
         finally:
             janus_queue.close()
@@ -394,7 +365,7 @@ class TestBaseApiInferencer(unittest.TestCase):
         stop_event = threading.Event()
         stop_event.set()
 
-        inf._fill_janus_queue(mock.Mock(), mock.Mock(), {}, janus_queue, stop_event)
+        inf._fill_janus_queue(mock.Mock(), {}, janus_queue, stop_event)
         janus_queue.close()
 
     @mock.patch("ais_bench.benchmark.openicl.icl_inferencer.icl_base_inferencer.build_model_from_cfg")
@@ -411,7 +382,7 @@ class TestBaseApiInferencer(unittest.TestCase):
         inf._get_single_data = mock.Mock(return_value=None)
 
         try:
-            inf._fill_janus_queue(mock.Mock(), mock.Mock(), {}, janus_queue, stop_event)
+            inf._fill_janus_queue(mock.Mock(), {}, janus_queue, stop_event)
             items = []
             while not janus_queue.sync_q.empty():
                 items.append(janus_queue.sync_q.get())

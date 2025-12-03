@@ -11,6 +11,7 @@ import copy
 import contextlib
 from abc import abstractmethod
 from collections import defaultdict
+import multiprocessing as mp
 from multiprocessing import BoundedSemaphore, Queue, shared_memory, Value
 from typing import Any, Dict, Optional, Tuple
 
@@ -28,6 +29,7 @@ from ais_bench.benchmark.utils.logging.logger import AISLogger
 
 BLOCK_INTERVAL = 0.005  # Avoid request burst accumulation when RR is not configured
 DEFAULT_SAVE_EVERY_FACTOR = 0.1 # default save every factor is 0.1 of batch size
+DEFAULT_DATA_FETCH_SIZE_FACTOR = 0.1 # default data fetch size factor is 0.1 of batch size
 
 
 class BaseApiInferencer(BaseInferencer):
@@ -58,6 +60,16 @@ class BaseApiInferencer(BaseInferencer):
         self.pressure_time = pressure_time
         # status_counter: If perf mode requires additional threads/counters, consider lazy creation to reduce overhead in normal mode.
         self.status_counter = StatusCounter()
+        self.global_index = mp.RawValue('i', 0)
+        self.global_lock = mp.Lock()
+        # Cache for batch-prefetched data
+        self._data_cache = []  # Thread-local cache for batch data
+
+    def set_global_index(self, global_index: mp.RawValue):
+        self.global_index = global_index
+
+    def set_global_lock(self, global_lock: mp.Lock):
+        self.global_lock = global_lock
 
     def _monitor_status_thread(
         self,
@@ -208,10 +220,11 @@ class BaseApiInferencer(BaseInferencer):
         self,
         share_memory: shared_memory.SharedMemory,
         indexes: Dict,
-        message_share_memory: shared_memory.SharedMemory,
-        stop_event: threading.Event,
     ) -> Optional[Any]:
         """Attempt to consume one token (if configured) and one index entry.
+
+        Uses batch prefetching with process lock to improve concurrency.
+        Returns a single data item (not a generator) for compatibility.
 
         All blocking operations are dispatched to a thread via asyncio.to_thread so the
         event loop is never blocked.
@@ -220,31 +233,56 @@ class BaseApiInferencer(BaseInferencer):
         Args:
             share_memory: Shared memory containing data
             indexes: Indexes for data
-            message_share_memory: Shared memory for message
 
         Returns:
             Deserialized data or None if no data available
         """
-        data_index = -1
-        while data_index == -1 and not stop_event.is_set():
-            flag = struct.unpack_from("I", message_share_memory.buf[MESSAGE_INFO.DATA_SYNC_FLAG[0]:MESSAGE_INFO.DATA_SYNC_FLAG[1]], 0)[0]
-            if flag != 1:
-                continue
-            data_index = struct.unpack_from("i", message_share_memory.buf[MESSAGE_INFO.DATA_INDEX[0]:MESSAGE_INFO.DATA_INDEX[1]], 0)[0]
-        message_share_memory.buf[MESSAGE_INFO.DATA_INDEX[0]:MESSAGE_INFO.DATA_INDEX[1]] = struct.pack("i", -1)
-        if data_index <0 or data_index >= len(indexes):
-            self.logger.debug(f"Data index out of range: {data_index}, return None")
-            return None
-        index_data = indexes[data_index]
-        if not index_data:
-            self.logger.debug(f"Index data is None, return None")
-            return None
-        return self._read_and_unpickle(share_memory.buf, index_data)
+        # Check cache first (thread-safe)
+        if self._data_cache:
+            return self._data_cache.pop(0)
+
+        # Calculate batch fetch size (10% of batch_size, minimum 1)
+        data_fetch_size = max(1, int(self.batch_size * DEFAULT_DATA_FETCH_SIZE_FACTOR)) if self.batch_size else 1
+
+        # Atomically get batch of indices
+        data_indices = []
+        with self.global_lock:
+            data_index_start = self.global_index.value
+            # Check bounds
+            if data_index_start >= len(indexes):
+                self.logger.warning("Get unexpected data index, return None")
+                return None
+            # Calculate end index
+            data_index_end = data_index_start + data_fetch_size
+            # Get indices
+            end_index = data_index_end % len(indexes)
+            for index_id in range(data_index_start, data_index_end):
+                cur_index = index_id % len(indexes)
+                data_indices.append(cur_index)
+                if indexes[cur_index] is None:
+                    end_index = cur_index
+                    break
+            # Update global index
+            self.global_index.value = end_index
+
+        # Prefetch all data in the batch
+        batch_data = []
+        for data_index in data_indices:
+            index_data = indexes[data_index]
+            if index_data is None:
+                batch_data.append(None)
+                break
+            data = self._read_and_unpickle(share_memory.buf, index_data)
+            batch_data.append(data)
+
+        self._data_cache.extend(batch_data[1:])
+
+        # Return first item
+        return batch_data[0] if batch_data else None
 
     def _fill_janus_queue(
         self,
         dataset_share_memory: shared_memory.SharedMemory,
-        message_share_memory: shared_memory.SharedMemory,
         indexes: Dict,
         janus_queue: janus.Queue,
         stop_event: threading.Event,
@@ -262,9 +300,7 @@ class BaseApiInferencer(BaseInferencer):
         for _ in range(self.batch_size):
             if stop_event.is_set():
                 break
-            data = self._get_single_data(
-                dataset_share_memory, indexes, message_share_memory, stop_event
-            )
+            data = self._get_single_data(dataset_share_memory, indexes)
             # Block if queue is full -> natural backpressure
             janus_queue.sync_q.put(data)
             if data is None:
@@ -274,7 +310,6 @@ class BaseApiInferencer(BaseInferencer):
     def _producer_thread_target(
         self,
         dataset_share_memory: shared_memory.SharedMemory,
-        message_share_memory: shared_memory.SharedMemory,
         indexes: Dict,
         janus_queue: janus.Queue,
         stop_event: threading.Event,
@@ -290,9 +325,7 @@ class BaseApiInferencer(BaseInferencer):
         """
         # Continuous fill until stop_event or sentinel
         while not stop_event.is_set():
-            data = self._get_single_data(
-                dataset_share_memory, indexes, message_share_memory, stop_event
-            )
+            data = self._get_single_data(dataset_share_memory, indexes)
             while True:
                 try:
                     janus_queue.sync_q.put(data, timeout=1)
@@ -420,10 +453,20 @@ class BaseApiInferencer(BaseInferencer):
                     break
                 # Call user-provided async request
                 tasks.append(asyncio.create_task(limited_request_func(data)))
-                # Pressure mode: exit when stable state is reached
-                if self.pressure_mode and len(tasks) >= num_workers:
-                    self.logger.debug(f"Pressure mode, exit when stable state is reached")
-                    break
+                # Pressure mode: exit when max concurrency is reached
+                if self.pressure_mode:
+                    if  len(tasks) >= num_workers: # max concurrency is reached
+                        self.logger.info(f"Pressure mode, process {os.getpid()} stop add concurrency due to max concurrency is reached")
+                        break
+                    if time.perf_counter() - start_time >= self.pressure_time: # pressure timeout is reached
+                        self.logger.warning(
+                            f"Pressure mode: process {os.getpid()} exited before entering a stable state "
+                            "because the pressure timeout was hit. Consider increase the `request_rate` "
+                            "in the model config, or increasing "
+                            "`WORKERS_NUM` in global_consts.py to enhance concurrency."
+                        )
+                        stop_event.set()
+                        break
             await asyncio.gather(*tasks)
         except asyncio.exceptions.CancelledError:
             self.logger.debug(f"Keyboard interrupt, set stop event")
@@ -481,7 +524,6 @@ class BaseApiInferencer(BaseInferencer):
 
         self._fill_janus_queue(
             dataset_share_memory,
-            message_share_memory,
             indexes,
             janus_queue,
             stop_event,
@@ -492,7 +534,6 @@ class BaseApiInferencer(BaseInferencer):
             target=self._producer_thread_target,
             args=(
                 dataset_share_memory,
-                message_share_memory,
                 indexes,
                 janus_queue,
                 stop_event,
@@ -536,7 +577,6 @@ class BaseApiInferencer(BaseInferencer):
             )
             stop_event.set()
             message_share_memory.buf[MESSAGE_INFO.STATUS[0]:MESSAGE_INFO.STATUS[1]] = struct.pack("I", 1)
-            message_share_memory.buf[MESSAGE_INFO.DATA_INDEX[0]:MESSAGE_INFO.DATA_INDEX[1]] = struct.pack("i", -1)
             worker_task.cancel()
             try:
                 loop.run_until_complete(asyncio.wait_for(worker_task, timeout=10))
@@ -548,7 +588,6 @@ class BaseApiInferencer(BaseInferencer):
             stop_event.set()
             producer_thread.join()
             message_share_memory.buf[MESSAGE_INFO.STATUS[0]:MESSAGE_INFO.STATUS[1]] = struct.pack("I", 1)
-            message_share_memory.buf[MESSAGE_INFO.DATA_INDEX[0]:MESSAGE_INFO.DATA_INDEX[1]] = struct.pack("i", -1)
             self.logger.debug(f"Stop event set")
              # Join threads
             report_thread.join()

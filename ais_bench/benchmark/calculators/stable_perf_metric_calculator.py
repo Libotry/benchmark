@@ -11,7 +11,7 @@ from ais_bench.benchmark.utils.logging.error_codes import CALC_CODES
 from ais_bench.benchmark.utils.logging.exceptions import AISBenchDataContentError
 
 WAVE_OFFSET = 0.02
-
+INTERVAL_OFFSET = 0.001
 
 @PERF_METRIC_CALCULATORS.register_module()
 class StablePerfMetricCalculator(BasePerfMetricCalculator):
@@ -72,6 +72,8 @@ class StablePerfMetricCalculator(BasePerfMetricCalculator):
         Raises:
             RuntimeError: If no stable stage can be identified
         """
+        # Calculate the minimum start time as the baseline
+        min_start_time = min(perf_details["start_time"])
         time_point_concurrency = [0] * 2 * len(perf_details["id"])
         request_time_sections = []
         for id in range(len(perf_details["id"])):
@@ -128,9 +130,37 @@ class StablePerfMetricCalculator(BasePerfMetricCalculator):
                 and time_point_concurrency[i]
                 < int(self.max_concurrency * (1 - WAVE_OFFSET))
             ):
-                self.stage_section[1] = section["time"]
-                progress_bar.update(len(sorted_time_sections) - progress_bar.n)
-                break
+                # Check if there's a start event within INTERVAL_OFFSET that recovers concurrency
+                # Skip consecutive end events and look ahead for start events
+                should_exit_stable = True
+                current_time = section["time"]
+                current_concurrency = time_point_concurrency[i]
+
+                # Look ahead to find the next start event within INTERVAL_OFFSET
+                for j in range(i + 1, len(sorted_time_sections)):
+                    next_section = sorted_time_sections[j]
+                    time_interval = next_section["time"] - current_time
+
+                    # If time interval exceeds INTERVAL_OFFSET, exit stable stage
+                    if time_interval > INTERVAL_OFFSET:
+                        break
+
+                    # Update concurrency based on the event type
+                    if next_section["attr"] == "end":
+                        current_concurrency -= 1
+                    else:  # start event
+                        current_concurrency += 1
+                        # If concurrency recovers to threshold, don't exit stable stage
+                        if current_concurrency >= int(
+                            self.max_concurrency * (1 - WAVE_OFFSET)
+                        ):
+                            should_exit_stable = False
+                            break
+
+                if should_exit_stable:
+                    self.stage_section[1] = section["time"]
+                    progress_bar.update(len(sorted_time_sections) - progress_bar.n)
+                    break
             progress_bar.update(1)
         progress_bar.close()
         if len(id_lists) > 0:
@@ -140,7 +170,15 @@ class StablePerfMetricCalculator(BasePerfMetricCalculator):
                 CALC_CODES.CAN_NOT_FIND_STABLE_STAGE,
                 "Can not find a stable stage from performance results! Please check the conccurency plot.",
             )
-        self.logger.info("Stable stage calculation completed.")
+        # Convert to relative time based on minimum start time
+        relative_start_time = self.stage_section[0] - min_start_time
+        relative_end_time = self.stage_section[1] - min_start_time
+        self.logger.info(
+            f"Stable stage calculation completed. "
+            f"Start time: {relative_start_time:.6f}, "
+            f"End time: {relative_end_time:.6f}, "
+            f"Stable Stage Duration: {relative_end_time - relative_start_time:.6f}"
+        )
         return id_lists
 
     def _process_result(self, full_result: dict, stage_name: str):
