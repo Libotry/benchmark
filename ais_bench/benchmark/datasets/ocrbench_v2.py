@@ -1743,14 +1743,6 @@ def spotting_evaluation(prediction_list, img_metas):
         res_submit_list.append(",".join([str(x1),str(y1),str(x2),str(y1),str(x2),str(y2),str(x1),str(y2),rec]))
 
     res_gt_list = []
-    for bbox, rec in zip(img_metas["bbox"], img_metas["content"]):
-        x_coords = bbox[0::2]
-        y_coords = bbox[1::2]
-
-        x1, y1 = min(x_coords), min(y_coords)
-        x2, y2 = max(x_coords), max(y_coords)
-
-        res_gt_list.append(",".join([str(x1),str(y1),str(x2),str(y1),str(x2),str(y2),str(x1),str(y2),rec]))
 
     if len(res_submit_list) == 0 or len(res_gt_list) == 0:
         return 0
