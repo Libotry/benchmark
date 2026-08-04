@@ -114,7 +114,9 @@ class Infer(BaseWorker):
             # Remove a stale status left by a previous interrupted run so the
             # inference board does not wait on an outdated ResponseAnomaly state.
             stale_status = osp.join(
-                cfg['work_dir'], 'status_tmp', 'tmp_ResponseAnomaly.json'
+                cfg['work_dir'],
+                'status_tmp',
+                ResponseAnomalyCoordinator.STATUS_FILE_NAME,
             )
             try:
                 if os.path.isfile(stale_status):
