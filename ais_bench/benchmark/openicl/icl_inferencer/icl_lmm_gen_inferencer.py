@@ -32,7 +32,11 @@ class LMMGenInferencer(GenInferencer):
             **kwargs,
         )
 
-        self.output_handler = LMMGenInferencerOutputHandler(perf_mode=self.perf_mode, save_every=self.save_every)
+        self.output_handler = LMMGenInferencerOutputHandler(
+            perf_mode=self.perf_mode,
+            save_every=self.save_every,
+            response_anomaly_runtime=self.response_anomaly_runtime,
+        )
 
     def inference(
         self,

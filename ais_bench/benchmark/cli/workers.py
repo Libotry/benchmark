@@ -110,7 +110,10 @@ class Infer(BaseWorker):
             logger.info("Merging datasets with the same model and inferencer...")
             tasks = self._merge_datasets(tasks)
 
-        if cfg.get('response_anomaly', {}).get('enabled', False):
+        anomaly_cfg = cfg.get('response_anomaly', {})
+        anomaly_enabled = anomaly_cfg.get('enabled', False)
+        detection_mode = anomaly_cfg.get('detection_mode', 'online')
+        if anomaly_enabled:
             # Remove a stale status left by a previous interrupted run so the
             # inference board does not wait on an outdated ResponseAnomaly state.
             stale_status = osp.join(
@@ -124,9 +127,21 @@ class Infer(BaseWorker):
             except OSError:
                 pass
 
+        if anomaly_enabled and detection_mode == 'online':
+            runtimes = self.response_anomaly_coordinator.start_online(cfg)
+            for task in tasks:
+                for model_cfg in task.get('models', []):
+                    runtime = runtimes.get(model_cfg.get('abbr'))
+                    if runtime:
+                        model_cfg['response_anomaly_runtime'] = runtime
+
         runner = RUNNERS.build(cfg.infer.runner)
-        runner(tasks)
-        if cfg.get('response_anomaly', {}).get('enabled', False):
+        try:
+            runner(tasks)
+        finally:
+            if anomaly_enabled and detection_mode == 'online':
+                self.response_anomaly_coordinator.finish_online_producers()
+        if anomaly_enabled and detection_mode != 'online':
             self.response_anomaly_coordinator.start(cfg)
         logger.info("Inference tasks completed.")
 
@@ -516,6 +531,7 @@ class ResponseAnomalyWait(BaseWorker):
         self.response_anomaly_coordinator.join()
         if monitor_p:
             monitor_p.join()
+        self.response_anomaly_coordinator.finalize(cfg)
         TasksMonitor.rm_tmp_files(work_dir)
         if self.response_anomaly_coordinator.summary:
             logger.info(

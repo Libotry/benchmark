@@ -51,7 +51,7 @@ logprobs=True
 top_logprobs=20
 ```
 
-服务适配器将上述字段提取为 `response_anomaly_payload` 并保存在预测 Case 中。服务未提供必要字段时，Case 仍正常评测，但检测结果记录为 `skipped`。
+服务适配器将上述字段提取为 `response_anomaly_payload`。单条响应完成后，输出处理器通过本地 Unix Domain Socket 将其提交给对应模型的检测进程，提交成功即解除引用，不写入预测文件或临时文件。服务未提供必要字段时，Case 仍正常评测，但检测结果记录为 `skipped`。
 
 ### 2.3 msProbe 模型配置要求
 
@@ -132,9 +132,9 @@ sequenceDiagram
 | --- | --- | --- |
 | CLI 开关 | [ais_bench/benchmark/cli/argument_parser.py](../../../ais_bench/benchmark/cli/argument_parser.py) | 提供 `--response-anomaly` 和 `--no-response-anomaly`。 |
 | 配置归一化 | [ais_bench/benchmark/cli/config_manager.py](../../../ais_bench/benchmark/cli/config_manager.py) | 合并 CLI / 总配置，注入服务端 logprobs 请求参数。 |
-| 工作流协调 | [ais_bench/benchmark/cli/workers.py](../../../ais_bench/benchmark/cli/workers.py) | 推理结束后启动检测线程；工作流结束前等待线程完成。 |
+| 工作流协调 | [ais_bench/benchmark/cli/workers.py](../../../ais_bench/benchmark/cli/workers.py) | 推理前启动检测进程；推理结束后 drain 队列，工作流结束前等待检测完成。 |
 | 响应采集 | [ais_bench/benchmark/models/api_models/base_api.py](../../../ais_bench/benchmark/models/api_models/base_api.py) | 从流式或非流式服务响应中提取 token 与 top-k logprobs。 |
-| Case 透传 | [ais_bench/benchmark/openicl/icl_inferencer/output_handler/gen_inferencer_output_handler.py](../../../ais_bench/benchmark/openicl/icl_inferencer/output_handler/gen_inferencer_output_handler.py) | 将 `response_anomaly_payload` 保留在预测 JSONL。 |
+| Case 透传 | [ais_bench/benchmark/openicl/icl_inferencer/output_handler/gen_inferencer_output_handler.py](../../../ais_bench/benchmark/openicl/icl_inferencer/output_handler/gen_inferencer_output_handler.py) | 提取并在线提交 `response_anomaly_payload`，提交后立即释放。 |
 | 检测协调器 | [ais_bench/benchmark/utils/response_anomaly.py](../../../ais_bench/benchmark/utils/response_anomaly.py) | 读预测、合并模型级配置、按需生成 msProbe 配置、初始化检测器、落盘、恢复与状态上报。 |
 | 配置生成工具 | [ais_bench/tools/response_anomaly/gen_model_config.py](../../../ais_bench/tools/response_anomaly/gen_model_config.py) | 包装 msProbe 官方生成器，输出到用户目录并合并 mtype 配置。 |
 | 面板展示 | [ais_bench/benchmark/runners/base.py](../../../ais_bench/benchmark/runners/base.py) | 动态读取 `ResponseAnomaly` 状态并展示。 |
@@ -149,7 +149,14 @@ sequenceDiagram
 response_anomaly = dict(
     enabled=True,
     top_logprobs=20,
+    detection_mode='online',
+    detector_queue_size=16,
+    detector_enqueue_timeout=30,
     msprobe_config_path='/path/to/config.yaml',  # 可选，算法阈值配置
+    normal_sample_rate=0.001,
+    normal_sample_min=10,
+    normal_sample_max=50,
+    normal_sample_seed=0,
 )
 
 models = [
@@ -170,11 +177,18 @@ models = [
 | --- | --- | --- | --- | --- |
 | `enabled` | 全局 | bool | `False` | 是否启动异常检测。 |
 | `top_logprobs` | 全局/模型 | int | `20` | 请求服务返回的每个 token 的 top-k logprobs 数量，模型级可覆盖。 |
+| `detection_mode` | 全局 | str | `online` | `online` 在推理期间检测；`post_inference` 保留推理后检测兼容模式。 |
+| `detector_queue_size` | 全局 | int | `16` | 每个模型检测进程的有界队列容量。 |
+| `detector_enqueue_timeout` | 全局 | float | `30` | payload 等待进入检测队列的超时时间（秒）。 |
 | `model_name` | 模型 | str | 模型 `abbr` | msProbe 模型名称，应与其 `mtype_config.json` 及 token 分类映射一致。 |
 | `model_path` | 模型 | str | 无 | 本地模型目录；配置后且未指定 mtype/token2category 时自动生成。 |
 | `msprobe_config_path` | 全局/模型 | str | msProbe 包内默认 | 算法阈值 `config.yaml` 路径。 |
 | `msprobe_mtype_path` | 模型 | str | msProbe 包内默认 | `mtype_config.json` 路径。 |
 | `msprobe_token2category_dir` | 模型 | str | msProbe 包内默认 | `token2category/` 目录路径。 |
+| `normal_sample_rate` | 全局 | float | `0.001` | 正常样本完整 payload 的抽样比例。 |
+| `normal_sample_min` | 全局 | int | `10` | 每个模型/数据集至少保留的正常样本数；正常样本不足时全部保留。 |
+| `normal_sample_max` | 全局 | int | `50` | 每个模型/数据集最多保留的正常样本数。 |
+| `normal_sample_seed` | 全局 | int | `0` | 稳定哈希抽样种子。 |
 
 当 `model_path` 已配置且未提供 `msprobe_mtype_path` / `msprobe_token2category_dir` 时，AISBench 在检测启动前自动调用配置生成工具，输出到 `<work_dir>/response_anomaly_config/<模型 abbr>/`。
 
@@ -214,25 +228,26 @@ AISBench 直接使用 `ILLDetector`，以便传入用户配置的三个文件路
 
 ### 5.2 预测 Case 扩展字段
 
-当服务返回必要信息时，原始预测 JSONL 会增加：
+在线模式下，完整 token/logprob 数据只通过内存 IPC 队列进入检测进程，不写入 prediction、普通推理缓存或全量 staging。原始预测 JSONL 最终仅增加轻量检测摘要：
 
 ```json
 {
   "id": 12,
   "uuid": "...",
-  "success": true,
   "prediction": "...",
-  "response_anomaly_payload": {
-    "tokens": [151643, 123, 456],
-    "topk_logprobs": [
-      {"151643": -0.01, "12": -5.2},
-      {"123": -0.12, "88": -3.5}
-    ]
+  "response_anomaly": {
+    "detection_status": "completed",
+    "is_anomaly": true,
+    "anomaly_type": 2,
+    "anomaly_type_name": "garbled",
+    "detector_version": "x.y.z",
+    "detector_config_digest": "sha256:...",
+    "token_count": 512
   }
 }
 ```
 
-该字段仅作为检测输入保留，Eval 不读取该字段，因此不改变原有指标计算。
+Eval 不读取该字段，因此不改变原有指标计算。
 
 ### 5.3 异常结果 Schema
 
@@ -264,18 +279,29 @@ AISBench 直接使用 `ILLDetector`，以便传入用户配置的三个文件路
 | `unavailable` | 未安装 `mindstudio-probe`。 |
 | `failed` | 调用或输入转换发生异常，`reason` 保存错误摘要。 |
 
+完整诊断数据按模型和数据集压缩保存：
+
+```text
+<work_dir>/response_anomaly/<model_abbr>/<dataset_abbr>_abnormal_and_failed.jsonl.gz
+<work_dir>/response_anomaly/<model_abbr>/<dataset_abbr>_normal_samples.jsonl.gz
+<work_dir>/response_anomaly/detector_manifest.json
+```
+
+异常和检测失败样本全部保存。正常样本采用稳定哈希抽样，数量为
+`min(正常样本数, 50, max(10, ceil(正常样本数 * 0.1%)))`。manifest 保存检测器版本、配置路径及内容摘要和抽样参数。
+
 ## 6. 并发、状态与恢复设计
 
 ### 6.1 并发策略
 
-检测线程由 `ResponseAnomalyCoordinator` 管理：
+检测进程由 `ResponseAnomalyCoordinator` 管理：
 
-1. Infer runner 全部任务完成后启动一个后台线程。
-2. 线程逐个读取预测 Case 并调用 msProbe。
-3. Eval、JudgeInfer、AccViz 继续在主工作流执行。
-4. `ResponseAnomalyWait` 位于相关工作流尾部，对线程执行 `join()`，防止进程退出导致检测结果不完整。
+1. Infer runner 启动前，每个 service 模型启动一个检测进程并完成 msProbe 初始化。
+2. 单条响应完成后通过 Unix Domain Socket 进入有界队列，检测结果独立写盘。
+3. Infer 结束后停止接收新 Case 并排空队列；Eval、JudgeInfer、AccViz 可继续并行执行。
+4. `ResponseAnomalyWait` 位于相关工作流尾部，等待检测进程并合并轻量摘要。
 
-检测不参与模型请求链路，不增加单 Case 推理请求的同步等待时间；但工作流最终退出前会等待未完成检测，保证结果完整可追溯。
+推理计时在 payload 投递前结束。队列未满时只增加 IPC 提交开销；队列满时产生有界背压，避免内存无限增长。正常非候选 payload 检测后立即释放，检测异常和投递失败 payload 才落盘。
 
 ### 6.2 状态面板
 
@@ -298,11 +324,13 @@ AISBench 直接使用 `ILLDetector`，以便传入用户配置的三个文件路
 
 ### 6.3 中断续推
 
-检测开始前，协调器读取已存在的异常结果 JSONL：
+检测进程启动时读取已存在的异常结果 JSONL：
 
-1. 以 `id` 建立已处理 Case 集合。
+1. 以 `id + uuid` 建立已处理 Case 集合。
 2. 已存在的结果不重复调用 msProbe。
 3. 将既有结果的异常类型累加到实时统计。
+
+在线模式不保存正常非抽样 payload。进程被强制终止时，尚未检测的内存 payload 无法恢复，最终标记为 `interrupted`；若需要重新检测，必须重新推理对应 Case。
 4. 仅处理预测 JSONL 中未记录的 Case。
 
 因此，结合 `--reuse` 继续执行时，已完成 Case 的异常数量和检测结果均被继承。

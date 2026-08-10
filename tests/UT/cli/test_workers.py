@@ -179,6 +179,46 @@ class TestInfer:
 
     @patch('ais_bench.benchmark.cli.workers.PARTITIONERS')
     @patch('ais_bench.benchmark.cli.workers.RUNNERS')
+    def test_do_work_starts_online_anomaly_detector_before_runner(
+        self, mock_runners, mock_partitioners, tmp_path
+    ):
+        task = {
+            'models': [{'abbr': 'modelA', 'attr': 'service'}],
+            'datasets': [[{'abbr': 'dataset'}]],
+        }
+        mock_partitioner = MagicMock(return_value=[task])
+        mock_partitioners.build.return_value = mock_partitioner
+        events = []
+        mock_runner = MagicMock(side_effect=lambda tasks: events.append('runner'))
+        mock_runners.build.return_value = mock_runner
+        coordinator = MagicMock()
+        coordinator.start_online.side_effect = lambda cfg: (
+            events.append('detector')
+            or {'modelA': {'socket_path': '/tmp/test.sock'}}
+        )
+        self.infer_worker.response_anomaly_coordinator = coordinator
+        cfg = MockConfigDict({
+            'work_dir': str(tmp_path),
+            'infer': {'partitioner': {}, 'runner': {}},
+            'models': [{'abbr': 'modelA', 'attr': 'service'}],
+            'datasets': [{'abbr': 'dataset'}],
+            'response_anomaly': {
+                'enabled': True,
+                'detection_mode': 'online',
+            },
+            'cli_args': {'merge_ds': False, 'mode': 'infer'},
+        })
+
+        self.infer_worker.do_work(cfg)
+
+        assert events == ['detector', 'runner']
+        assert task['models'][0]['response_anomaly_runtime'] == {
+            'socket_path': '/tmp/test.sock'
+        }
+        coordinator.finish_online_producers.assert_called_once_with()
+
+    @patch('ais_bench.benchmark.cli.workers.PARTITIONERS')
+    @patch('ais_bench.benchmark.cli.workers.RUNNERS')
     @patch('ais_bench.benchmark.cli.workers.logger')
     def test_do_work_merge_datasets(self, mock_logger, mock_runners, mock_partitioners):
         """测试do_work方法，合并数据集的情况"""

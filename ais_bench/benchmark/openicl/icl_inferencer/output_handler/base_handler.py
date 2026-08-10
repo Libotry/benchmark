@@ -39,7 +39,12 @@ class BaseInferencerOutputHandler:
         all_success (bool): Flag indicating if all operations were successful
     """
 
-    def __init__(self, perf_mode: bool = False, save_every: int = 100) -> None:
+    def __init__(
+        self,
+        perf_mode: bool = False,
+        save_every: int = 100,
+        response_anomaly_runtime: Optional[dict] = None,
+    ) -> None:
         """
         Initialize the base inferencer output handler.
 
@@ -55,6 +60,8 @@ class BaseInferencerOutputHandler:
         self.perf_mode = perf_mode
         self.all_success = True
         self.save_every = save_every
+        self.response_anomaly_runtime = response_anomaly_runtime
+        self._response_anomaly_client = None
 
     @abstractmethod
     def get_prediction_result(
@@ -168,6 +175,32 @@ class BaseInferencerOutputHandler:
                 else:
                     raw_data_name = data_abbr + "_details.jsonl"
 
+                payload_results = {}
+                for uid, result in results_dict.items():
+                    payload = result.pop("response_anomaly_payload", None)
+                    if payload is None:
+                        continue
+                    payload_results[uid] = {
+                        "data_abbr": result.get("data_abbr", data_abbr),
+                        "id": result.get("id"),
+                        "uuid": result.get("uuid"),
+                        "response_anomaly_payload": payload,
+                    }
+                if payload_results:
+                    # Keep the large token/logprob payload out of prediction files.
+                    # The response-anomaly coordinator consumes this staging file
+                    # and removes it after creating the diagnostic archives.
+                    model_abbr = Path(save_dir).name
+                    work_dir = Path(save_dir).parent.parent
+                    payload_file = (
+                        work_dir
+                        / "response_anomaly_payload"
+                        / model_abbr
+                        / f"{data_abbr}.jsonl"
+                    )
+                    payload_file.parent.mkdir(parents=True, exist_ok=True)
+                    safe_write(payload_results, payload_file)
+
                 file_path = Path(save_dir) / raw_data_name
                 safe_write(results_dict, file_path)
                 self.logger.debug(f"Process {os.getpid()} write results to {file_path}")
@@ -180,7 +213,14 @@ class BaseInferencerOutputHandler:
                 safe_write(results_dict, file_path)
                 self.logger.debug(f"Process {os.getpid()} write failed results to {file_path}")
 
+            if self._response_anomaly_client is not None:
+                self._response_anomaly_client.close()
+                self._response_anomaly_client = None
+
         except Exception as e:
+            if self._response_anomaly_client is not None:
+                self._response_anomaly_client.close()
+                self._response_anomaly_client = None
             raise FileOperationError(
                 ICLI_CODES.INFER_RESULT_WRITE_ERROR,
                 f"Failed to write results to {file_path}: {str(e)}",
@@ -382,6 +422,8 @@ class BaseInferencerOutputHandler:
                         }
 
                         json_data.update(result_data)
+                        if not perf_mode and result_data.get("success", True):
+                            self._submit_response_anomaly(json_data)
                         if perf_mode:
                             json_data["db_name"] = db_name
                             self.results_dict[data_abbr][uid] = json_data
@@ -398,8 +440,11 @@ class BaseInferencerOutputHandler:
                             }
                             self.failed_results_dict[data_abbr][uid] = fail_data
 
-                        # Pre-compute JSON string to avoid repeated serialization
-                        json_str = json.dumps(json_data, ensure_ascii=False) + '\n'
+                        # The full anomaly payload is staged separately by
+                        # write_to_json; keep the inference cache lightweight.
+                        cache_json_data = dict(json_data)
+                        cache_json_data.pop("response_anomaly_payload", None)
+                        json_str = json.dumps(cache_json_data, ensure_ascii=False) + '\n'
                         # self.logger.debug(f"Saving result to cache_data: {json_str}")
                         cache_data.append(json_str)
 
@@ -465,3 +510,35 @@ class BaseInferencerOutputHandler:
             raise AISBenchRuntimeError(ICLI_CODES.UNKNOWN_ERROR, f"Failed to send stop signal to cache consumer: {str(e)}")
         self.logger.debug("Stop signal sent to cache consumer")
 
+    def _submit_response_anomaly(self, json_data: dict) -> None:
+        runtime = self.response_anomaly_runtime
+        if not runtime:
+            return
+        from ais_bench.benchmark.utils.response_anomaly_online import (
+            OnlineResponseAnomalyClient,
+            write_undelivered,
+        )
+
+        record = {
+            "data_abbr": json_data.get("data_abbr"),
+            "id": json_data.get("id"),
+            "uuid": json_data.get("uuid"),
+            "response_anomaly_payload": json_data.get(
+                "response_anomaly_payload"
+            ),
+        }
+        try:
+            if self._response_anomaly_client is None:
+                self._response_anomaly_client = OnlineResponseAnomalyClient(runtime)
+            self._response_anomaly_client.submit(record)
+        except Exception as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+            self.logger.warning(
+                "Failed to submit response anomaly payload for %s:%s: %s",
+                record.get("id"),
+                record.get("uuid"),
+                reason,
+            )
+            write_undelivered(runtime, record, reason)
+        finally:
+            json_data.pop("response_anomaly_payload", None)

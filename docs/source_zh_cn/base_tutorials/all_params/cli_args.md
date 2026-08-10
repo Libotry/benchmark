@@ -35,7 +35,7 @@ ais_bench [OPTIONS]
 | `--num-prompts` | 指定数据集测评条数（按照数据集顺序选取），需传入正整数，超过数据集条数或默认情况下表示对全量数据集进行测评。 | `--num-prompts 500` |
 | `--max-num-workers`   | 并行任务数，范围 `[1, CPU 核数]`，默认 `1`。在指定`--debug`时配置无效，所有任务串行执行。注意：性能测评场景下，并发数过高可能会导致不同进程出现资源抢占，导致测试结果失真。  | `--max-num-workers 2` |
 |`--num-warmups`|发送请求前预热次数，按照数据集顺序选取数据进行测试，大概num-warmups大于数据集条数时，会循环发送数据集中数据。默认 `1`；若设为0，则不预热。如果warmup阶段所有请求失败，后续推理任务将不会执行。| `--num-warmups 10` |
-| `--response-anomaly` / `--no-response-anomaly` | 开启或关闭 msProbe 推理响应异常检测。命令行配置优先于配置文件中的 `response_anomaly.enabled`。检测在线程中与 Eval 并行运行；需服务返回 token id 与 top-k logprobs。仅支持 `all`、`infer`、`infer_judge` 普通生成链路，不支持性能模式与 Agent 测评模式。 | `--response-anomaly` |
+| `--response-anomaly` / `--no-response-anomaly` | 开启或关闭 msProbe 推理响应异常检测。命令行配置优先于配置文件中的 `response_anomaly.enabled`。默认在独立进程中与推理、Eval 并行运行；需服务返回 token id 与 top-k logprobs。仅支持 `all`、`infer`、`infer_judge` 普通生成链路，不支持性能模式与 Agent 测评模式。 | `--response-anomaly` |
 
 ### 精度测评参数
 仅在模式为 `all、infer、eval` 或 `viz` 时有效。
@@ -61,6 +61,13 @@ ais_bench [OPTIONS]
 response_anomaly = dict(
 	enabled=True,
 	top_logprobs=20,
+	detection_mode='online',
+	detector_queue_size=16,
+	detector_enqueue_timeout=30,
+	normal_sample_rate=0.001,
+	normal_sample_min=10,
+	normal_sample_max=50,
+	normal_sample_seed=0,
 )
 ```
 
@@ -90,7 +97,7 @@ ais_bench-gen-response-anomaly-config \
   --output-dir ./msprobe_configs
 ```
 
-启用后，AISBench 会在服务推理请求中补充 `logprobs=True` 与 `top_logprobs`。推理结束即启动后台检测，检测结果写入 `response_anomaly/<模型>/<数据集>.jsonl`；每个 Case 包含 `is_anomaly`、`anomaly_type`（0：正常，1：生僻字，2：乱码，3：重复，4：NaN Value）和 `detection_status`。状态面板会显示 `ResponseAnomaly` 进度及各类型数量，检测未完成时面板保持刷新；`infer`/`infer_judge` 等无后续评测面板的模式会在收尾阶段启动独立监控展示检测进度。
+启用后，AISBench 会在服务推理请求中补充 `logprobs=True` 与 `top_logprobs`，并在 Infer runner 前为每个模型启动一个检测进程。单条响应完成后，完整 payload 通过本地 Unix Domain Socket 进入有界内存队列，提交后从输出对象释放，不进入 prediction、普通 tmp 或全量 staging。异常和检测失败 payload 全部写入 `*_abnormal_and_failed.jsonl.gz`；正常非候选 payload 立即释放，最终按 0.1% 抽样、每组至少 10 条且最多 50 条写入 `*_normal_samples.jsonl.gz`。检测摘要写入 `response_anomaly/<模型>/<数据集>.jsonl` 并在收尾时合并到 prediction，检测器版本、配置摘要、抽样参数和队列指标记录在 `response_anomaly/detector_manifest.json`。
 
 检测通过 msProbe 的 `ILLDetector(config_path, mtype_path, tk2cat_path).run(...)` 完成，三个文件路径均可由 AISBench 配置。请先安装 AISBench 的可选依赖：`pip install 'ais-bench-benchmark[response_anomaly]'`。安装过程中 pip 会从 GitCode 下载并构建已固定提交的 msProbe 源码，因此安装环境需要 Git 和网络访问。服务响应必须包含 `token_ids`（或 `tokens`）和 `topk_logprobs`；缺少这些字段的 Case 会以 `skipped` 状态落盘。`model_name` 需与 msProbe 的 `mtype_config.json` 配置以及 token 分类映射保持一致。使用 `--reuse` 时，已有检测结果按 Case id 继承，已完成 Case 不会重复检测。
 

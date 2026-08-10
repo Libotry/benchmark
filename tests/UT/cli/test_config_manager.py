@@ -737,7 +737,15 @@ class TestConfigManager(unittest.TestCase):
         self.assertTrue(generation_kwargs['logprobs'])
         self.assertEqual(generation_kwargs['top_logprobs'], 20)
         self.assertTrue(generation_kwargs['response_anomaly_enabled'])
-        self.assertTrue(config_manager.cfg['response_anomaly']['enabled'])
+        anomaly_cfg = config_manager.cfg['response_anomaly']
+        self.assertTrue(anomaly_cfg['enabled'])
+        self.assertEqual(anomaly_cfg['detection_mode'], 'online')
+        self.assertEqual(anomaly_cfg['detector_queue_size'], 16)
+        self.assertEqual(anomaly_cfg['detector_enqueue_timeout'], 30)
+        self.assertEqual(anomaly_cfg['normal_sample_rate'], 0.001)
+        self.assertEqual(anomaly_cfg['normal_sample_min'], 10)
+        self.assertEqual(anomaly_cfg['normal_sample_max'], 50)
+        self.assertEqual(anomaly_cfg['normal_sample_seed'], 0)
 
     def test_response_anomaly_overrides_explicit_logprobs_config(self):
         """启用异常检测时强制覆盖模型里显式的 logprobs/top_logprobs。"""
@@ -774,6 +782,41 @@ class TestConfigManager(unittest.TestCase):
         config_manager = ConfigManager(self.args)
         config_manager.cfg = {
             'response_anomaly': {'top_logprobs': 0},
+            'models': [{'abbr': 'model', 'attr': 'service'}],
+            'datasets': [{'abbr': 'dataset'}],
+            'cli_args': {},
+        }
+
+        with self.assertRaises(AISBenchConfigError):
+            config_manager._init_response_anomaly_config()
+
+    def test_response_anomaly_rejects_invalid_normal_sample_limits(self):
+        self.args.mode = 'all'
+        self.args.response_anomaly = True
+        config_manager = ConfigManager(self.args)
+        config_manager.cfg = {
+            'response_anomaly': {
+                'normal_sample_rate': 1.1,
+                'normal_sample_min': 50,
+                'normal_sample_max': 10,
+            },
+            'models': [{'abbr': 'model', 'attr': 'service'}],
+            'datasets': [{'abbr': 'dataset'}],
+            'cli_args': {},
+        }
+
+        with self.assertRaises(AISBenchConfigError):
+            config_manager._init_response_anomaly_config()
+
+    def test_response_anomaly_rejects_invalid_online_queue_config(self):
+        self.args.mode = 'all'
+        self.args.response_anomaly = True
+        config_manager = ConfigManager(self.args)
+        config_manager.cfg = {
+            'response_anomaly': {
+                'detection_mode': 'online',
+                'detector_queue_size': 0,
+            },
             'models': [{'abbr': 'model', 'attr': 'service'}],
             'datasets': [{'abbr': 'dataset'}],
             'cli_args': {},

@@ -6,6 +6,7 @@ import os
 import queue
 import numpy as np
 import functools
+import json
 import shutil
 
 from ais_bench.benchmark.openicl.icl_inferencer.output_handler.base_handler import BaseInferencerOutputHandler
@@ -51,6 +52,116 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
             handler.write_to_json(tmpdir, False)
             file_path = os.path.join(tmpdir, "test.jsonl")
             self.assertTrue(os.path.exists(file_path))
+
+    def test_write_to_json_stages_response_anomaly_payload(self):
+        handler = ConcreteOutputHandler()
+        handler.results_dict["test"] = {
+            "uid1": {
+                "data_abbr": "test",
+                "id": 0,
+                "uuid": "case-0",
+                "result": "ok",
+                "response_anomaly_payload": {
+                    "tokens": [1],
+                    "topk_logprobs": [{"1": -0.1}],
+                },
+            }
+        }
+        with TempDirectory() as tmpdir:
+            save_dir = os.path.join(tmpdir, "predictions", "modelA")
+            handler.write_to_json(save_dir, False)
+
+            with open(
+                os.path.join(save_dir, "test.jsonl"), encoding="utf-8"
+            ) as file:
+                prediction = json.loads(file.readline())
+            self.assertNotIn("response_anomaly_payload", prediction)
+
+            payload_file = os.path.join(
+                tmpdir,
+                "response_anomaly_payload",
+                "modelA",
+                "test.jsonl",
+            )
+            with open(payload_file, encoding="utf-8") as file:
+                staged = json.loads(file.readline())
+            self.assertEqual(staged["uuid"], "case-0")
+            self.assertEqual(
+                staged["response_anomaly_payload"]["tokens"], [1]
+            )
+
+    @mock.patch(
+        "ais_bench.benchmark.utils.response_anomaly_online."
+        "OnlineResponseAnomalyClient"
+    )
+    def test_online_response_anomaly_submits_and_releases_payload(
+        self, mock_client_cls
+    ):
+        runtime = {
+            "work_dir": "/tmp/work",
+            "model_abbr": "modelA",
+            "socket_path": "/tmp/test.sock",
+            "token": "token",
+        }
+        handler = ConcreteOutputHandler(response_anomaly_runtime=runtime)
+        data = {
+            "data_abbr": "test",
+            "id": 1,
+            "uuid": "case-1",
+            "response_anomaly_payload": {
+                "tokens": [1],
+                "topk_logprobs": [{"1": -0.1}],
+            },
+        }
+
+        handler._submit_response_anomaly(data)
+
+        submitted = mock_client_cls.return_value.submit.call_args.args[0]
+        self.assertEqual(submitted["id"], 1)
+        self.assertEqual(submitted["response_anomaly_payload"]["tokens"], [1])
+        self.assertNotIn("response_anomaly_payload", data)
+
+    @mock.patch(
+        "ais_bench.benchmark.utils.response_anomaly_online."
+        "OnlineResponseAnomalyClient"
+    )
+    def test_online_response_anomaly_preserves_undelivered_payload(
+        self, mock_client_cls
+    ):
+        mock_client_cls.return_value.submit.side_effect = OSError("socket down")
+        with TempDirectory() as tmpdir:
+            runtime = {
+                "work_dir": tmpdir,
+                "model_abbr": "modelA",
+                "socket_path": "/tmp/test.sock",
+                "token": "token",
+            }
+            handler = ConcreteOutputHandler(response_anomaly_runtime=runtime)
+            data = {
+                "data_abbr": "test",
+                "id": 1,
+                "uuid": "case-1",
+                "response_anomaly_payload": {
+                    "tokens": [1],
+                    "topk_logprobs": [{"1": -0.1}],
+                },
+            }
+
+            handler._submit_response_anomaly(data)
+
+            fallback = os.path.join(
+                tmpdir,
+                "response_anomaly",
+                ".undelivered",
+                "modelA",
+                "test.jsonl",
+            )
+            with open(fallback, encoding="utf-8") as file:
+                preserved = json.loads(file.readline())
+            self.assertEqual(
+                preserved["response_anomaly_payload"]["tokens"], [1]
+            )
+            self.assertNotIn("response_anomaly_payload", data)
 
     def test_write_to_json_empty_results_dict(self):
         """测试write_to_json在results_dict为空时不创建文件"""
@@ -378,4 +489,3 @@ class TestBaseInferencerOutputHandler(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-

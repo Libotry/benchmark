@@ -116,11 +116,81 @@ class ConfigManager:
         global_cfg.setdefault('enabled', False)
         global_cfg.setdefault('top_logprobs', 20)
         global_cfg.setdefault('msprobe_config_path', None)
+        global_cfg.setdefault('detection_mode', 'online')
+        global_cfg.setdefault('detector_queue_size', 16)
+        global_cfg.setdefault('detector_enqueue_timeout', 30)
+        global_cfg.setdefault('normal_sample_rate', 0.001)
+        global_cfg.setdefault('normal_sample_min', 10)
+        global_cfg.setdefault('normal_sample_max', 50)
+        global_cfg.setdefault('normal_sample_seed', 0)
         self.cfg['response_anomaly'] = global_cfg
         if not global_cfg['enabled']:
             return
 
         self._validate_response_anomaly_support()
+        detection_mode = global_cfg['detection_mode']
+        queue_size = global_cfg['detector_queue_size']
+        enqueue_timeout = global_cfg['detector_enqueue_timeout']
+        if detection_mode not in ('online', 'post_inference'):
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly.detection_mode must be 'online' or "
+                f"'post_inference', got {detection_mode!r}.",
+            )
+        if (
+            not isinstance(queue_size, int)
+            or isinstance(queue_size, bool)
+            or queue_size <= 0
+        ):
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly.detector_queue_size must be a positive "
+                f"integer, got {queue_size!r}.",
+            )
+        if (
+            not isinstance(enqueue_timeout, (int, float))
+            or isinstance(enqueue_timeout, bool)
+            or enqueue_timeout <= 0
+        ):
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly.detector_enqueue_timeout must be positive, "
+                f"got {enqueue_timeout!r}.",
+            )
+        sample_rate = global_cfg['normal_sample_rate']
+        sample_min = global_cfg['normal_sample_min']
+        sample_max = global_cfg['normal_sample_max']
+        sample_seed = global_cfg['normal_sample_seed']
+        if (
+            not isinstance(sample_rate, (int, float))
+            or isinstance(sample_rate, bool)
+            or not 0 <= sample_rate <= 1
+        ):
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly.normal_sample_rate must be between 0 and 1, "
+                f"got {sample_rate!r}.",
+            )
+        if (
+            not isinstance(sample_min, int)
+            or isinstance(sample_min, bool)
+            or sample_min < 0
+            or not isinstance(sample_max, int)
+            or isinstance(sample_max, bool)
+            or sample_max < sample_min
+        ):
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly normal sample limits must satisfy "
+                f"0 <= normal_sample_min <= normal_sample_max, got "
+                f"{sample_min!r} and {sample_max!r}.",
+            )
+        if not isinstance(sample_seed, int) or isinstance(sample_seed, bool):
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly.normal_sample_seed must be an integer, "
+                f"got {sample_seed!r}.",
+            )
         models = self.cfg.get('models')
         if not isinstance(models, list):
             return

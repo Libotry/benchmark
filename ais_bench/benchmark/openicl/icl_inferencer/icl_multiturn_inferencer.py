@@ -58,7 +58,11 @@ class MultiTurnGenInferencer(BaseApiInferencer, BaseLocalInferencer):
         self.stopping_criteria = list(stopping_criteria) if stopping_criteria else []
         self.gen_field_replace_token = gen_field_replace_token or ""
 
-        self.output_handler = GenInferencerOutputHandler(perf_mode=self.perf_mode, save_every=self.save_every)
+        self.output_handler = GenInferencerOutputHandler(
+            perf_mode=self.perf_mode,
+            save_every=self.save_every,
+            response_anomaly_runtime=self.response_anomaly_runtime,
+        )
         self.infer_mode = infer_mode
         self.logger.info(f"Multiturn Inferencer infer with mode: {self.infer_mode}")
 

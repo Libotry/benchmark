@@ -1,3 +1,4 @@
+import gzip
 import json
 import sys
 import types
@@ -6,6 +7,9 @@ from collections import Counter
 import pytest
 
 from ais_bench.benchmark.utils.response_anomaly import ResponseAnomalyCoordinator
+from ais_bench.benchmark.utils.response_anomaly_online import (
+    OnlineResponseAnomalyClient,
+)
 
 
 class FakeDetector:
@@ -14,6 +18,14 @@ class FakeDetector:
 
     def run(self, topk_logprobs, tokens, model_configs):
         return [self.result]
+
+
+class RoutingDetector:
+    def run(self, topk_logprobs, tokens, model_configs):
+        token = tokens[0][0]
+        if token == 13:
+            raise RuntimeError("detector failed")
+        return [[token == 12, 2 if token == 12 else 0]]
 
 
 def test_detect_case_calls_msprobe_detector():
@@ -361,3 +373,297 @@ def test_detect_warns_when_no_predictions_found(tmp_path, monkeypatch):
     assert status["status"] == "finish"
     assert status["total_count"] == 0
     assert any("No predictions" in message for message in warnings)
+
+
+def test_detect_reads_payload_from_staging_file(tmp_path, monkeypatch):
+    prediction_file = tmp_path / "predictions" / "modelA" / "ds.jsonl"
+    prediction_file.parent.mkdir(parents=True)
+    prediction_file.write_text(
+        json.dumps({"id": 1, "uuid": "u1", "prediction": "ok"}) + "\n",
+        encoding="utf-8",
+    )
+    payload_file = (
+        tmp_path / "response_anomaly_payload" / "modelA" / "ds.jsonl"
+    )
+    payload_file.parent.mkdir(parents=True)
+    payload_file.write_text(
+        json.dumps(
+            {
+                "id": 1,
+                "uuid": "u1",
+                "response_anomaly_payload": {
+                    "tokens": [1],
+                    "topk_logprobs": [{"1": -0.1}],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    cfg = {
+        "work_dir": str(tmp_path),
+        "models": [{"abbr": "modelA", "attr": "service"}],
+        "datasets": [{"abbr": "ds"}],
+        "response_anomaly": {},
+    }
+    coordinator = ResponseAnomalyCoordinator()
+    monkeypatch.setattr(
+        coordinator,
+        "_build_detector",
+        lambda cfg: (FakeDetector([False, 0]), None),
+    )
+
+    coordinator._detect(cfg)
+
+    result = json.loads(
+        (tmp_path / "response_anomaly" / "modelA" / "ds.jsonl")
+        .read_text(encoding="utf-8")
+        .strip()
+    )
+    assert result["detection_status"] == "completed"
+    assert result["token_count"] == 1
+
+
+def test_finalize_creates_compact_predictions_and_diagnostics(tmp_path):
+    prediction_file = tmp_path / "predictions" / "modelA" / "ds.jsonl"
+    result_file = tmp_path / "response_anomaly" / "modelA" / "ds.jsonl"
+    payload_file = (
+        tmp_path / "response_anomaly_payload" / "modelA" / "ds.jsonl"
+    )
+    prediction_file.parent.mkdir(parents=True)
+    result_file.parent.mkdir(parents=True)
+    payload_file.parent.mkdir(parents=True)
+
+    predictions = []
+    results = []
+    payloads = []
+    for case_id in range(14):
+        predictions.append(
+            {
+                "data_abbr": "ds",
+                "id": case_id,
+                "uuid": f"u{case_id}",
+                "prediction": "ok",
+            }
+        )
+        is_anomaly = case_id == 12
+        status = "failed" if case_id == 13 else "completed"
+        results.append(
+            {
+                "id": case_id,
+                "uuid": f"u{case_id}",
+                "detection_status": status,
+                "is_anomaly": is_anomaly,
+                "anomaly_type": 2 if is_anomaly else 0,
+                "anomaly_type_name": (
+                    "garbled" if is_anomaly else status if status == "failed" else "normal"
+                ),
+                "token_count": 1,
+            }
+        )
+        payloads.append(
+            {
+                "id": case_id,
+                "uuid": f"u{case_id}",
+                "response_anomaly_payload": {
+                    "tokens": [case_id],
+                    "topk_logprobs": [{str(case_id): -0.1}],
+                },
+            }
+        )
+
+    prediction_file.write_text(
+        "".join(json.dumps(item) + "\n" for item in predictions),
+        encoding="utf-8",
+    )
+    result_file.write_text(
+        "".join(json.dumps(item) + "\n" for item in results),
+        encoding="utf-8",
+    )
+    payload_file.write_text(
+        "".join(json.dumps(item) + "\n" for item in payloads),
+        encoding="utf-8",
+    )
+    cfg = {
+        "work_dir": str(tmp_path),
+        "models": [{"abbr": "modelA", "attr": "service"}],
+        "datasets": [{"abbr": "ds"}],
+        "response_anomaly": {
+            "enabled": True,
+            "normal_sample_rate": 0.001,
+            "normal_sample_min": 10,
+            "normal_sample_max": 50,
+            "normal_sample_seed": 7,
+        },
+    }
+    coordinator = ResponseAnomalyCoordinator()
+    coordinator._summary = {"normal": 12, "garbled": 1, "failed": 1}
+    coordinator._model_manifests = {
+        "modelA": {"detector_version": "1.0", "config_digest": "sha256:test"}
+    }
+
+    coordinator.finalize(cfg)
+
+    compact_predictions = [
+        json.loads(line) for line in prediction_file.read_text().splitlines()
+    ]
+    assert all("response_anomaly_payload" not in item for item in compact_predictions)
+    assert compact_predictions[12]["response_anomaly"]["anomaly_type_name"] == "garbled"
+    assert not payload_file.exists()
+
+    with gzip.open(
+        tmp_path
+        / "response_anomaly"
+        / "modelA"
+        / "ds_abnormal_and_failed.jsonl.gz",
+        "rt",
+        encoding="utf-8",
+    ) as file:
+        abnormal = [json.loads(line) for line in file]
+    with gzip.open(
+        tmp_path
+        / "response_anomaly"
+        / "modelA"
+        / "ds_normal_samples.jsonl.gz",
+        "rt",
+        encoding="utf-8",
+    ) as file:
+        normal = [json.loads(line) for line in file]
+    assert {item["id"] for item in abnormal} == {12, 13}
+    assert len(normal) == 10
+
+    manifest = json.loads(
+        (tmp_path / "response_anomaly" / "detector_manifest.json").read_text()
+    )
+    assert manifest["normal_sampling"] == {
+        "rate": 0.001,
+        "minimum": 10,
+        "maximum": 50,
+        "method": "stable_bottom_k",
+        "seed": 7,
+    }
+
+
+def test_online_detection_releases_normal_payloads_without_staging(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        ResponseAnomalyCoordinator,
+        "_build_detector",
+        staticmethod(lambda cfg: (RoutingDetector(), None)),
+    )
+    prediction_file = tmp_path / "predictions" / "modelA" / "ds.jsonl"
+    prediction_file.parent.mkdir(parents=True)
+    prediction_file.write_text(
+        "".join(
+            json.dumps(
+                {
+                    "data_abbr": "ds",
+                    "id": case_id,
+                    "uuid": f"u{case_id}",
+                    "prediction": "ok",
+                }
+            )
+            + "\n"
+            for case_id in range(14)
+        ),
+        encoding="utf-8",
+    )
+    cfg = {
+        "work_dir": str(tmp_path),
+        "models": [
+            {
+                "abbr": "modelA",
+                "attr": "service",
+                "response_anomaly": {"model_name": "modelA"},
+            }
+        ],
+        "datasets": [{"abbr": "ds"}],
+        "response_anomaly": {
+            "enabled": True,
+            "detection_mode": "online",
+            "top_logprobs": 1,
+            "detector_queue_size": 2,
+            "detector_enqueue_timeout": 5,
+            "normal_sample_rate": 0.001,
+            "normal_sample_min": 10,
+            "normal_sample_max": 50,
+            "normal_sample_seed": 7,
+        },
+    }
+    coordinator = ResponseAnomalyCoordinator()
+
+    runtime = coordinator.start_online(cfg)["modelA"]
+    client = OnlineResponseAnomalyClient(runtime)
+    for case_id in range(14):
+        client.submit(
+            {
+                "data_abbr": "ds",
+                "id": case_id,
+                "uuid": f"u{case_id}",
+                "response_anomaly_payload": {
+                    "tokens": [case_id],
+                    "topk_logprobs": [{str(case_id): -0.1}],
+                },
+            }
+        )
+    client.close()
+    coordinator.finish_online_producers()
+    coordinator.join()
+    coordinator.finalize(cfg)
+
+    assert not (tmp_path / "response_anomaly_payload").exists()
+    compact = [
+        json.loads(line) for line in prediction_file.read_text().splitlines()
+    ]
+    assert compact[12]["response_anomaly"]["anomaly_type_name"] == "garbled"
+    assert compact[13]["response_anomaly"]["detection_status"] == "failed"
+
+    model_dir = tmp_path / "response_anomaly" / "modelA"
+    with gzip.open(
+        model_dir / "ds_normal_samples.jsonl.gz", "rt", encoding="utf-8"
+    ) as file:
+        normal = [json.loads(line) for line in file]
+    with gzip.open(
+        model_dir / "ds_abnormal_and_failed.jsonl.gz",
+        "rt",
+        encoding="utf-8",
+    ) as file:
+        abnormal = [json.loads(line) for line in file]
+    assert len(normal) == 10
+    assert {item["id"] for item in abnormal} == {12, 13}
+
+    manifest = json.loads(
+        (tmp_path / "response_anomaly" / "detector_manifest.json").read_text()
+    )
+    assert manifest["detection_mode"] == "online"
+    assert manifest["runtime_metrics"]["modelA"]["accepted"] == 14
+    assert manifest["runtime_metrics"]["modelA"]["max_queue_depth"] <= 2
+
+
+def test_online_detection_fails_before_inference_when_detector_cannot_start(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(
+        ResponseAnomalyCoordinator,
+        "_build_detector",
+        staticmethod(lambda cfg: (None, ("failed", "detector init failed"))),
+    )
+    cfg = {
+        "work_dir": str(tmp_path),
+        "models": [{"abbr": "modelA", "attr": "service"}],
+        "datasets": [{"abbr": "ds"}],
+        "response_anomaly": {
+            "enabled": True,
+            "detection_mode": "online",
+            "detector_queue_size": 2,
+            "detector_enqueue_timeout": 5,
+        },
+    }
+    coordinator = ResponseAnomalyCoordinator()
+
+    with pytest.raises(RuntimeError, match="detector init failed"):
+        coordinator.start_online(cfg)
+
+    assert coordinator._online_processes == {}
+    assert coordinator._online_runtimes == {}
