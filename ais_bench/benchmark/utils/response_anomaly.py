@@ -504,6 +504,10 @@ class ResponseAnomalyCoordinator:
             result["anomaly_type_name"] = "skipped"
             return result
 
+        topk_widths = [len(item) for item in topk_logprobs]
+        result["topk_min"] = min(topk_widths)
+        result["topk_max"] = max(topk_widths)
+
         if init_error is not None:
             status, reason = init_error
             result.update(
@@ -517,6 +521,13 @@ class ResponseAnomalyCoordinator:
             topk_logprobs = self._normalize_logprobs(topk_logprobs)
             tokens = [int(token) for token in tokens]
             model_name = anomaly_cfg.get("model_name")
+            # msProbe caches the minimum top-k width from its first request in
+            # detector.topk. Parquet shards can be read in a different order
+            # from prediction JSONL, so retaining that value makes detection
+            # depend on which request happens to be first. Recompute it for
+            # every response while still reusing the expensive detector data.
+            if hasattr(detector, "topk"):
+                detector.topk = None
             is_anomaly, anomaly_type = detector.run(
                 [topk_logprobs], [tokens], [model_name]
             )[0]

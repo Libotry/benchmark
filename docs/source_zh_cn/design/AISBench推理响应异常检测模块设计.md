@@ -239,6 +239,9 @@ AISBench 直接使用 `ILLDetector`，以便传入用户配置的三个文件路
 
 每个推理 worker 独立写分片；正式分片由 `.inprogress` 校验行数后原子改名生成。Parquet schema 使用 `list<int64>` 保存 tokens，并将 top-k 拆为 `list<list<int64>>` 与 `list<list<float64>>`。logprob 保持与原 JSON/Python float 相同的双精度，避免存储过程改变检测输入。prediction 和普通 tmp 文件不保存完整 payload。
 
+离线检测复用已加载词表的 `ILLDetector`，但每条响应检测前重置其缓存的 `topk`，使 top-k 宽度按当前响应重新计算，避免 Parquet 分片遍历顺序改变检测结果。
+检测摘要同时记录当前响应的 `topk_min` 和 `topk_max`，用于定位服务返回候选数不一致及检测阈值异常。
+
 ### 5.3 异常结果 Schema
 
 异常检测结果写入：

@@ -16,6 +16,16 @@ class FakeDetector:
         return [self.result]
 
 
+class StatefulTopkDetector:
+    def __init__(self):
+        self.topk = 1
+
+    def run(self, topk_logprobs, tokens, model_configs):
+        assert self.topk is None
+        self.topk = min(len(item) for item in topk_logprobs[0])
+        return [[False, 0]]
+
+
 def test_detect_case_calls_msprobe_detector():
     result = ResponseAnomalyCoordinator()._detect_case(
         {
@@ -34,6 +44,38 @@ def test_detect_case_calls_msprobe_detector():
     assert result["is_anomaly"] is True
     assert result["anomaly_type"] == 3
     assert result["anomaly_type_name"] == "repetition"
+    assert result["topk_min"] == 1
+    assert result["topk_max"] == 1
+
+
+def test_detect_case_resets_msprobe_cached_topk_for_each_response():
+    detector = StatefulTopkDetector()
+    coordinator = ResponseAnomalyCoordinator()
+    payload = {
+        "tokens": [1, 2],
+        "topk_logprobs": [
+            {"1": -0.1, "11": -1.1},
+            {"2": -0.2, "12": -1.2},
+        ],
+    }
+
+    first = coordinator._detect_case(
+        {"id": 1, "uuid": "first", "response_anomaly_payload": payload},
+        {"model_name": "model"},
+        detector,
+        None,
+    )
+    detector.topk = 1
+    second = coordinator._detect_case(
+        {"id": 2, "uuid": "second", "response_anomaly_payload": payload},
+        {"model_name": "model"},
+        detector,
+        None,
+    )
+
+    assert first["detection_status"] == "completed"
+    assert second["detection_status"] == "completed"
+    assert detector.topk == 2
 
 
 def test_detect_case_skips_missing_token_payload():
