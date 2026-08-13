@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 def _load_pyarrow():
@@ -41,7 +41,7 @@ def payload_schema():
             ),
             pa.field(
                 "topk_logprobs",
-                pa.list_(pa.list_(pa.float32())),
+                pa.list_(pa.list_(pa.float64())),
                 nullable=False,
             ),
         ]

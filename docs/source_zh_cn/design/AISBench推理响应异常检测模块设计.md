@@ -237,7 +237,7 @@ AISBench 直接使用 `ILLDetector`，以便传入用户配置的三个文件路
 └── payload_manifest.json
 ```
 
-每个推理 worker 独立写分片；正式分片由 `.inprogress` 校验行数后原子改名生成。Parquet schema 使用 `list<int64>` 保存 tokens，并将 top-k 拆为 `list<list<int64>>` 与 `list<list<float32>>`。prediction 和普通 tmp 文件不保存完整 payload。
+每个推理 worker 独立写分片；正式分片由 `.inprogress` 校验行数后原子改名生成。Parquet schema 使用 `list<int64>` 保存 tokens，并将 top-k 拆为 `list<list<int64>>` 与 `list<list<float64>>`。logprob 保持与原 JSON/Python float 相同的双精度，避免存储过程改变检测输入。prediction 和普通 tmp 文件不保存完整 payload。
 
 ### 5.3 异常结果 Schema
 

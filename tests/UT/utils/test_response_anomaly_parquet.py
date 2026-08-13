@@ -25,6 +25,24 @@ def _record(case_id, data_abbr="ds"):
     }
 
 
+def _high_precision_record():
+    return {
+        "data_abbr": "ds",
+        "id": 100,
+        "uuid": "u100",
+        "response_anomaly_payload": {
+            "tokens": [100],
+            "topk_logprobs": [
+                {
+                    "100": -0.123456789012345,
+                    "101": -12.987654321098765,
+                    "102": -0.000000123456789,
+                }
+            ],
+        },
+    }
+
+
 def test_parquet_writer_uses_zstd_shards_and_round_trips(tmp_path):
     writer = ResponseAnomalyParquetWriter(
         {
@@ -101,3 +119,26 @@ def test_parquet_writer_keeps_datasets_separate(tmp_path):
     root = tmp_path / "response_anomaly" / "modelA" / "payload"
     assert len(list((root / "ds1").glob("part-*.parquet"))) == 1
     assert len(list((root / "ds2").glob("part-*.parquet"))) == 1
+
+
+def test_parquet_round_trip_preserves_logprob_precision_and_order(tmp_path):
+    writer = ResponseAnomalyParquetWriter(
+        {
+            "work_dir": str(tmp_path),
+            "model_abbr": "modelA",
+            "write_batch_size": 1,
+            "rows_per_shard": 10,
+            "max_buffered_rows": 1,
+        }
+    )
+    original = _high_precision_record()
+    writer.write(original)
+    writer.close()
+
+    payload_dir = tmp_path / "response_anomaly" / "modelA" / "payload" / "ds"
+    payload = next(iter_payload_records(payload_dir))["response_anomaly_payload"]
+    original_topk = original["response_anomaly_payload"]["topk_logprobs"][0]
+    restored_topk = payload["topk_logprobs"][0]
+
+    assert list(restored_topk) == [100, 101, 102]
+    assert list(restored_topk.values()) == list(original_topk.values())
