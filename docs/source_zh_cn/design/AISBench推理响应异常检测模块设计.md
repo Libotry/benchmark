@@ -51,7 +51,7 @@ logprobs=True
 top_logprobs=20
 ```
 
-服务适配器将上述字段提取为 `response_anomaly_payload` 并保存在预测 Case 中。服务未提供必要字段时，Case 仍正常评测，但检测结果记录为 `skipped`。
+服务适配器将上述字段提取为 `response_anomaly_payload`，由输出处理器分流到 Parquet+ZSTD 分片后立即从预测 Case 移除。服务未提供必要字段时，Case 仍正常评测，但检测结果记录为 `skipped`。
 
 ### 2.3 msProbe 模型配置要求
 
@@ -134,7 +134,7 @@ sequenceDiagram
 | 配置归一化 | [ais_bench/benchmark/cli/config_manager.py](../../../ais_bench/benchmark/cli/config_manager.py) | 合并 CLI / 总配置，注入服务端 logprobs 请求参数。 |
 | 工作流协调 | [ais_bench/benchmark/cli/workers.py](../../../ais_bench/benchmark/cli/workers.py) | 推理结束后启动检测线程；工作流结束前等待线程完成。 |
 | 响应采集 | [ais_bench/benchmark/models/api_models/base_api.py](../../../ais_bench/benchmark/models/api_models/base_api.py) | 从流式或非流式服务响应中提取 token 与 top-k logprobs。 |
-| Case 透传 | [ais_bench/benchmark/openicl/icl_inferencer/output_handler/gen_inferencer_output_handler.py](../../../ais_bench/benchmark/openicl/icl_inferencer/output_handler/gen_inferencer_output_handler.py) | 将 `response_anomaly_payload` 保留在预测 JSONL。 |
+| Case 透传 | [ais_bench/benchmark/openicl/icl_inferencer/output_handler/gen_inferencer_output_handler.py](../../../ais_bench/benchmark/openicl/icl_inferencer/output_handler/gen_inferencer_output_handler.py) | 提取 payload，并在写盘阶段分流到 Parquet 分片。 |
 | 检测协调器 | [ais_bench/benchmark/utils/response_anomaly.py](../../../ais_bench/benchmark/utils/response_anomaly.py) | 读预测、合并模型级配置、按需生成 msProbe 配置、初始化检测器、落盘、恢复与状态上报。 |
 | 配置生成工具 | [ais_bench/tools/response_anomaly/gen_model_config.py](../../../ais_bench/tools/response_anomaly/gen_model_config.py) | 包装 msProbe 官方生成器，输出到用户目录并合并 mtype 配置。 |
 | 面板展示 | [ais_bench/benchmark/runners/base.py](../../../ais_bench/benchmark/runners/base.py) | 动态读取 `ResponseAnomaly` 状态并展示。 |
@@ -149,6 +149,17 @@ sequenceDiagram
 response_anomaly = dict(
     enabled=True,
     top_logprobs=20,
+    detection_mode='post_inference',
+    payload_storage=dict(
+        format='parquet',
+        compression='zstd',
+        compression_level=3,
+        write_batch_size=64,
+        rows_per_shard=2000,
+        max_buffered_rows=256,
+        write_failure='fail',
+    ),
+    detector_read_batch_size=64,
     msprobe_config_path='/path/to/config.yaml',  # 可选，算法阈值配置
 )
 
@@ -170,6 +181,9 @@ models = [
 | --- | --- | --- | --- | --- |
 | `enabled` | 全局 | bool | `False` | 是否启动异常检测。 |
 | `top_logprobs` | 全局/模型 | int | `20` | 请求服务返回的每个 token 的 top-k logprobs 数量，模型级可覆盖。 |
+| `detection_mode` | 全局 | str | `post_inference` | 推理完成后从 Parquet 执行离线检测。 |
+| `payload_storage` | 全局 | dict | 见示例 | Parquet+ZSTD 分片、缓冲与写失败策略。 |
+| `detector_read_batch_size` | 全局 | int | `64` | 离线检测每次读取的 Arrow RecordBatch 行数。 |
 | `model_name` | 模型 | str | 模型 `abbr` | msProbe 模型名称，应与其 `mtype_config.json` 及 token 分类映射一致。 |
 | `model_path` | 模型 | str | 无 | 本地模型目录；配置后且未指定 mtype/token2category 时自动生成。 |
 | `msprobe_config_path` | 全局/模型 | str | msProbe 包内默认 | 算法阈值 `config.yaml` 路径。 |
@@ -214,25 +228,16 @@ AISBench 直接使用 `ILLDetector`，以便传入用户配置的三个文件路
 
 ### 5.2 预测 Case 扩展字段
 
-当服务返回必要信息时，原始预测 JSONL 会增加：
+当服务返回必要信息时，完整 payload 按“模型 + 数据集”写入 Parquet+ZSTD 分片：
 
-```json
-{
-  "id": 12,
-  "uuid": "...",
-  "success": true,
-  "prediction": "...",
-  "response_anomaly_payload": {
-    "tokens": [151643, 123, 456],
-    "topk_logprobs": [
-      {"151643": -0.01, "12": -5.2},
-      {"123": -0.12, "88": -3.5}
-    ]
-  }
-}
+```text
+<work_dir>/response_anomaly/<model_abbr>/payload/<dataset_abbr>/
+├── part-p<pid>-<session>-00000.parquet
+├── part-p<pid>-<session>-00001.parquet
+└── payload_manifest.json
 ```
 
-该字段仅作为检测输入保留，Eval 不读取该字段，因此不改变原有指标计算。
+每个推理 worker 独立写分片；正式分片由 `.inprogress` 校验行数后原子改名生成。Parquet schema 使用 `list<int64>` 保存 tokens，并将 top-k 拆为 `list<list<int64>>` 与 `list<list<float32>>`。prediction 和普通 tmp 文件不保存完整 payload。
 
 ### 5.3 异常结果 Schema
 
@@ -251,9 +256,14 @@ AISBench 直接使用 `ILLDetector`，以便传入用户配置的三个文件路
   "is_anomaly": true,
   "anomaly_type": 3,
   "anomaly_type_name": "repetition",
-  "detection_status": "completed"
+  "detection_status": "completed",
+  "token_count": 512,
+  "payload_shard": "part-p123-abc-00000.parquet",
+  "payload_row": 36
 }
 ```
+
+检测完成后，上述轻量摘要会通过 `id + uuid` 原子合并回 prediction。Parquet 分片长期保留，可在阈值或检测算法变化后直接复检。
 
 `detection_status` 的取值：
 
@@ -271,7 +281,7 @@ AISBench 直接使用 `ILLDetector`，以便传入用户配置的三个文件路
 检测线程由 `ResponseAnomalyCoordinator` 管理：
 
 1. Infer runner 全部任务完成后启动一个后台线程。
-2. 线程逐个读取预测 Case 并调用 msProbe。
+2. 线程按 Parquet 分片和 Arrow RecordBatch 流式读取，并逐 Case 调用 msProbe。
 3. Eval、JudgeInfer、AccViz 继续在主工作流执行。
 4. `ResponseAnomalyWait` 位于相关工作流尾部，对线程执行 `join()`，防止进程退出导致检测结果不完整。
 

@@ -1,6 +1,8 @@
 """Background msProbe response anomaly detection for completed AISBench predictions."""
 
 import json
+import hashlib
+import importlib.metadata
 import os
 import threading
 from collections import Counter
@@ -62,6 +64,7 @@ class ResponseAnomalyCoordinator:
         total = 0
         completed = 0
         counts: Counter[str] = Counter()
+        detector_manifests: Dict[str, Dict[str, Any]] = {}
         try:
             # The feature only supports service-model generation chains.
             pairs = [
@@ -77,15 +80,29 @@ class ResponseAnomalyCoordinator:
                     Path(work_dir) / "predictions" / model_abbr / f"{dataset_abbr}.jsonl"
                 )
                 predictions = self._read_jsonl(prediction_file)
+                payload_dir = (
+                    Path(work_dir)
+                    / "response_anomaly"
+                    / model_abbr
+                    / "payload"
+                    / dataset_abbr
+                )
                 task_groups.append(
-                    (model_abbr, dataset_abbr, model_cfg, prediction_file, predictions)
+                    (
+                        model_abbr,
+                        dataset_abbr,
+                        model_cfg,
+                        prediction_file,
+                        predictions,
+                        payload_dir,
+                    )
                 )
                 total += len(predictions)
 
             # Predictions are produced by the inference stage; an empty set
             # means that stage produced nothing (or its output moved), so warn
             # instead of silently "finishing" with zero analyzed cases.
-            for model_abbr, dataset_abbr, _, _, predictions in task_groups:
+            for model_abbr, dataset_abbr, _, _, predictions, _ in task_groups:
                 if not predictions:
                     self.logger.warning(
                         "No predictions found for model '%s' dataset '%s'; "
@@ -112,9 +129,18 @@ class ResponseAnomalyCoordinator:
             # datasets only generates its msProbe config and initializes the
             # ILLDetector once (token2category loading is expensive).
             detector_cache: Dict[str, tuple] = {}
-            for model_abbr, dataset_abbr, model_cfg, prediction_file, predictions in task_groups:
+            for (
+                model_abbr,
+                dataset_abbr,
+                model_cfg,
+                prediction_file,
+                predictions,
+                payload_dir,
+            ) in task_groups:
                 if model_abbr in detector_cache:
-                    anomaly_cfg, detector, init_error = detector_cache[model_abbr]
+                    anomaly_cfg, detector, init_error, metadata = detector_cache[
+                        model_abbr
+                    ]
                 else:
                     anomaly_cfg = self._merge_model_anomaly_config(
                         model_cfg, cfg["response_anomaly"]
@@ -136,7 +162,20 @@ class ResponseAnomalyCoordinator:
                             "failed",
                             f"Failed to prepare msProbe configuration: {exc}",
                         )
-                    detector_cache[model_abbr] = (anomaly_cfg, detector, init_error)
+                    detector_manifest = self._detector_manifest(anomaly_cfg)
+                    detector_manifests[model_abbr] = detector_manifest
+                    metadata = {
+                        "detector_version": detector_manifest["detector_version"],
+                        "detector_config_digest": detector_manifest[
+                            "config_digest"
+                        ],
+                    }
+                    detector_cache[model_abbr] = (
+                        anomaly_cfg,
+                        detector,
+                        init_error,
+                        metadata,
+                    )
                 result_file = (
                     Path(work_dir)
                     / "response_anomaly"
@@ -164,15 +203,55 @@ class ResponseAnomalyCoordinator:
                 # Ensure the result directory exists once per group instead of
                 # once per prediction (mkdir with exist_ok=True is idempotent).
                 result_file.parent.mkdir(parents=True, exist_ok=True)
-                for prediction in predictions:
-                    case_id = str(prediction.get("id"))
-                    case_key = f"{prediction.get('id')}:{prediction.get('uuid')}"
-                    if case_key in inherited:
+                prediction_by_key = {
+                    self._case_key(item): item for item in predictions
+                }
+                detected_keys = set(inherited)
+                payload_read_error = None
+                try:
+                    from ais_bench.benchmark.utils.response_anomaly_parquet import (
+                        build_payload_manifest,
+                        iter_payload_records,
+                    )
+
+                    build_payload_manifest(
+                        payload_dir,
+                        cfg["response_anomaly"].get("payload_storage", {}),
+                    )
+                    payload_records = iter_payload_records(
+                        payload_dir,
+                        batch_size=cfg["response_anomaly"].get(
+                            "detector_read_batch_size", 64
+                        ),
+                    )
+                except Exception as exc:
+                    self.logger.error(
+                        "Failed to prepare response anomaly payloads for "
+                        "%s/%s: %s",
+                        model_abbr,
+                        dataset_abbr,
+                        exc,
+                    )
+                    payload_records = []
+                    payload_read_error = (
+                        "Failed to read response anomaly Parquet payloads: "
+                        f"{exc}"
+                    )
+                    if init_error is None:
+                        init_error = ("failed", payload_read_error)
+
+                for payload_record in payload_records:
+                    case_key = self._case_key(payload_record)
+                    if case_key not in prediction_by_key or case_key in detected_keys:
                         continue
                     result = self._detect_case(
-                        prediction, anomaly_cfg, detector, init_error
+                        payload_record, anomaly_cfg, detector, init_error
                     )
-                    safe_write({case_id: result}, result_file)
+                    result.update(metadata)
+                    result["payload_shard"] = payload_record["payload_shard"]
+                    result["payload_row"] = payload_record["payload_row"]
+                    safe_write({case_key: result}, result_file)
+                    detected_keys.add(case_key)
                     completed += 1
                     counts[result["anomaly_type_name"]] += 1
                     self._post_status(
@@ -183,7 +262,41 @@ class ResponseAnomalyCoordinator:
                         "response anomaly detecting",
                     )
 
+                for case_key, prediction in prediction_by_key.items():
+                    if case_key in detected_keys:
+                        continue
+                    case_id = str(prediction.get("id"))
+                    if case_key in inherited:
+                        continue
+                    if (
+                        payload_read_error is not None
+                        and "response_anomaly_payload" not in prediction
+                    ):
+                        result = self._failed_result(
+                            prediction, payload_read_error
+                        )
+                    else:
+                        result = self._detect_case(
+                            prediction, anomaly_cfg, detector, init_error
+                        )
+                    result.update(metadata)
+                    safe_write({case_id: result}, result_file)
+                    detected_keys.add(case_key)
+                    completed += 1
+                    counts[result["anomaly_type_name"]] += 1
+                    self._post_status(
+                        status_file,
+                        completed,
+                        total,
+                        counts,
+                        "response anomaly detecting",
+                    )
+                self._merge_results_into_predictions(prediction_file, result_file)
+
             self._summary = dict(counts)
+            self._write_detector_manifest(
+                Path(work_dir), cfg, detector_manifests, self._summary
+            )
             self._post_status(
                 status_file,
                 completed,
@@ -223,6 +336,34 @@ class ResponseAnomalyCoordinator:
             for key, item in existing_by_key.items()
             if key in prediction_keys and item.get("detection_status") == "completed"
         }
+
+    @staticmethod
+    def _case_key(item: Dict[str, Any]) -> str:
+        return f"{item.get('id')}:{item.get('uuid')}"
+
+    def _merge_results_into_predictions(
+        self, prediction_file: Path, result_file: Path
+    ) -> None:
+        if not prediction_file.exists():
+            return
+        predictions = self._read_jsonl(prediction_file)
+        results = {
+            self._case_key(item): item for item in self._read_jsonl(result_file)
+        }
+        for prediction in predictions:
+            prediction.pop("response_anomaly_payload", None)
+            result = results.get(self._case_key(prediction))
+            if result is not None:
+                prediction["response_anomaly"] = {
+                    key: value
+                    for key, value in result.items()
+                    if key not in ("id", "uuid")
+                }
+        tmp_file = prediction_file.with_name(prediction_file.name + ".tmp")
+        with tmp_file.open("w", encoding="utf-8") as file:
+            for prediction in predictions:
+                file.write(json.dumps(prediction, ensure_ascii=False) + "\n")
+        os.replace(str(tmp_file), str(prediction_file))
 
     @staticmethod
     def _merge_model_anomaly_config(
@@ -309,6 +450,19 @@ class ResponseAnomalyCoordinator:
             )
         return detector, None
 
+    @staticmethod
+    def _failed_result(prediction: Dict[str, Any], reason: str) -> Dict[str, Any]:
+        return {
+            "id": prediction.get("id"),
+            "uuid": prediction.get("uuid"),
+            "is_anomaly": False,
+            "anomaly_type": 0,
+            "anomaly_type_name": "failed",
+            "token_count": 0,
+            "detection_status": "failed",
+            "reason": reason,
+        }
+
     def _detect_case(
         self,
         prediction: Dict[str, Any],
@@ -322,6 +476,7 @@ class ResponseAnomalyCoordinator:
             "is_anomaly": False,
             "anomaly_type": 0,
             "anomaly_type_name": "normal",
+            "token_count": 0,
         }
         payload = prediction.get("response_anomaly_payload")
         if not isinstance(payload, dict):
@@ -332,6 +487,8 @@ class ResponseAnomalyCoordinator:
 
         tokens = payload.get("tokens")
         topk_logprobs = payload.get("topk_logprobs")
+        if isinstance(tokens, list):
+            result["token_count"] = len(tokens)
         if (
             not isinstance(tokens, list)
             or not isinstance(topk_logprobs, list)
@@ -384,6 +541,84 @@ class ResponseAnomalyCoordinator:
             {int(token_id): float(logprob) for token_id, logprob in item.items()}
             for item in items
         ]
+
+    def _detector_manifest(self, anomaly_cfg: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            version = importlib.metadata.version("mindstudio-probe")
+        except importlib.metadata.PackageNotFoundError:
+            version = "unknown"
+        paths = {
+            "config": anomaly_cfg.get("msprobe_config_path"),
+            "mtype_config": anomaly_cfg.get("msprobe_mtype_path"),
+            "token2category": anomaly_cfg.get("msprobe_token2category_dir"),
+        }
+        digests = {
+            name: self._digest_path(value) for name, value in paths.items()
+        }
+        digest_value = {
+            "model_name": anomaly_cfg.get("model_name"),
+            "top_logprobs": anomaly_cfg.get("top_logprobs"),
+            "file_digests": digests,
+        }
+        config_digest = "sha256:" + hashlib.sha256(
+            json.dumps(digest_value, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        return {
+            "detector_version": version,
+            "model_name": anomaly_cfg.get("model_name"),
+            "top_logprobs": anomaly_cfg.get("top_logprobs"),
+            "paths": paths,
+            "file_digests": digests,
+            "config_digest": config_digest,
+        }
+
+    @staticmethod
+    def _digest_path(path_value: Any) -> Optional[str]:
+        if not path_value:
+            return None
+        path = Path(path_value)
+        if not path.exists():
+            return None
+        digest = hashlib.sha256()
+        try:
+            files = [path] if path.is_file() else sorted(
+                item for item in path.rglob("*") if item.is_file()
+            )
+            for item in files:
+                if path.is_dir():
+                    digest.update(str(item.relative_to(path)).encode("utf-8"))
+                with item.open("rb") as file:
+                    for chunk in iter(lambda: file.read(1024 * 1024), b""):
+                        digest.update(chunk)
+        except OSError:
+            return None
+        return "sha256:" + digest.hexdigest()
+
+    @staticmethod
+    def _write_detector_manifest(
+        work_dir: Path,
+        cfg: Dict[str, Any],
+        models: Dict[str, Dict[str, Any]],
+        summary: Dict[str, int],
+    ) -> None:
+        anomaly_cfg = cfg.get("response_anomaly", {})
+        manifest = {
+            "detector_name": "msprobe",
+            "detection_mode": "post_inference",
+            "models": models,
+            "payload_storage": anomaly_cfg.get("payload_storage", {}),
+            "detector_read_batch_size": anomaly_cfg.get(
+                "detector_read_batch_size", 64
+            ),
+            "summary": summary,
+        }
+        path = work_dir / "response_anomaly" / "detector_manifest.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_file = path.with_name(path.name + ".tmp")
+        tmp_file.write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        os.replace(str(tmp_file), str(path))
 
     def _post_status(
         self,

@@ -45,6 +45,16 @@ def test_detect_case_skips_missing_token_payload():
     assert result["is_anomaly"] is False
 
 
+def test_failed_result_reports_payload_read_failure():
+    result = ResponseAnomalyCoordinator._failed_result(
+        {"id": 2, "uuid": "case-2"}, "broken Parquet shard"
+    )
+
+    assert result["detection_status"] == "failed"
+    assert result["anomaly_type_name"] == "failed"
+    assert result["reason"] == "broken Parquet shard"
+
+
 def test_detect_case_skips_inconsistent_payload():
     result = ResponseAnomalyCoordinator()._detect_case(
         {
@@ -327,6 +337,76 @@ def test_detect_runs_full_workflow(tmp_path, monkeypatch):
     assert status["status"] == "finish"
     assert status["finish_count"] == 2
     assert status["total_count"] == 2
+
+
+def test_detect_reads_parquet_and_merges_lightweight_summary(tmp_path, monkeypatch):
+    from ais_bench.benchmark.utils.response_anomaly_parquet import (
+        ResponseAnomalyParquetWriter,
+    )
+
+    prediction_file = tmp_path / "predictions" / "modelA" / "ds.jsonl"
+    prediction_file.parent.mkdir(parents=True)
+    prediction_file.write_text(
+        json.dumps({"data_abbr": "ds", "id": 1, "uuid": "u1", "prediction": "ok"})
+        + "\n",
+        encoding="utf-8",
+    )
+    writer = ResponseAnomalyParquetWriter(
+        {
+            "work_dir": str(tmp_path),
+            "model_abbr": "modelA",
+            "write_batch_size": 1,
+            "rows_per_shard": 10,
+            "max_buffered_rows": 1,
+        }
+    )
+    writer.write(
+        {
+            "data_abbr": "ds",
+            "id": 1,
+            "uuid": "u1",
+            "response_anomaly_payload": {
+                "tokens": [1, 2],
+                "topk_logprobs": [{"1": -0.1}, {"2": -0.2}],
+            },
+        }
+    )
+    writer.close()
+    cfg = {
+        "work_dir": str(tmp_path),
+        "models": [{"abbr": "modelA", "attr": "service"}],
+        "datasets": [{"abbr": "ds"}],
+        "response_anomaly": {"detector_read_batch_size": 1},
+    }
+    coordinator = ResponseAnomalyCoordinator()
+    monkeypatch.setattr(
+        coordinator,
+        "_build_detector",
+        lambda cfg: (FakeDetector([False, 0]), None),
+    )
+
+    coordinator._detect(cfg)
+
+    result = json.loads(
+        (tmp_path / "response_anomaly" / "modelA" / "ds.jsonl")
+        .read_text()
+        .strip()
+    )
+    assert result["payload_shard"].endswith(".parquet")
+    assert result["payload_row"] == 0
+    assert result["token_count"] == 2
+    prediction = json.loads(prediction_file.read_text().strip())
+    assert "response_anomaly_payload" not in prediction
+    assert prediction["response_anomaly"]["detection_status"] == "completed"
+    assert (
+        tmp_path
+        / "response_anomaly"
+        / "modelA"
+        / "payload"
+        / "ds"
+        / "payload_manifest.json"
+    ).exists()
+    assert (tmp_path / "response_anomaly" / "detector_manifest.json").exists()
 
 
 def test_detect_warns_when_no_predictions_found(tmp_path, monkeypatch):

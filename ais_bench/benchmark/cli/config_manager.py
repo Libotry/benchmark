@@ -116,11 +116,86 @@ class ConfigManager:
         global_cfg.setdefault('enabled', False)
         global_cfg.setdefault('top_logprobs', 20)
         global_cfg.setdefault('msprobe_config_path', None)
+        global_cfg.setdefault('detection_mode', 'post_inference')
+        payload_storage = dict(global_cfg.get('payload_storage') or {})
+        payload_storage.setdefault('format', 'parquet')
+        payload_storage.setdefault('compression', 'zstd')
+        payload_storage.setdefault('compression_level', 3)
+        payload_storage.setdefault('write_batch_size', 64)
+        payload_storage.setdefault('rows_per_shard', 2000)
+        payload_storage.setdefault('max_buffered_rows', 256)
+        payload_storage.setdefault('write_failure', 'fail')
+        global_cfg['payload_storage'] = payload_storage
+        global_cfg.setdefault('detector_read_batch_size', 64)
         self.cfg['response_anomaly'] = global_cfg
         if not global_cfg['enabled']:
             return
 
         self._validate_response_anomaly_support()
+        if global_cfg['detection_mode'] != 'post_inference':
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly.detection_mode must be 'post_inference', "
+                f"got {global_cfg['detection_mode']!r}.",
+            )
+        if payload_storage['format'] != 'parquet':
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly.payload_storage.format must be 'parquet'.",
+            )
+        if payload_storage['compression'] != 'zstd':
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly.payload_storage.compression must be 'zstd'.",
+            )
+        compression_level = payload_storage['compression_level']
+        write_batch_size = payload_storage['write_batch_size']
+        rows_per_shard = payload_storage['rows_per_shard']
+        max_buffered_rows = payload_storage['max_buffered_rows']
+        if (
+            not isinstance(compression_level, int)
+            or isinstance(compression_level, bool)
+            or not 1 <= compression_level <= 9
+        ):
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly.payload_storage.compression_level must be "
+                f"an integer between 1 and 9, got {compression_level!r}.",
+            )
+        if (
+            not isinstance(write_batch_size, int)
+            or isinstance(write_batch_size, bool)
+            or write_batch_size <= 0
+            or not isinstance(rows_per_shard, int)
+            or isinstance(rows_per_shard, bool)
+            or rows_per_shard < write_batch_size
+            or not isinstance(max_buffered_rows, int)
+            or isinstance(max_buffered_rows, bool)
+            or max_buffered_rows < write_batch_size
+        ):
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly payload storage sizes must satisfy "
+                "0 < write_batch_size <= rows_per_shard and "
+                "write_batch_size <= max_buffered_rows.",
+            )
+        if payload_storage['write_failure'] not in ('fail', 'continue'):
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly.payload_storage.write_failure must be "
+                "'fail' or 'continue'.",
+            )
+        detector_read_batch_size = global_cfg['detector_read_batch_size']
+        if (
+            not isinstance(detector_read_batch_size, int)
+            or isinstance(detector_read_batch_size, bool)
+            or detector_read_batch_size <= 0
+        ):
+            raise AISBenchConfigError(
+                TMAN_CODES.UNKNOWN_ERROR,
+                "response_anomaly.detector_read_batch_size must be a positive "
+                f"integer, got {detector_read_batch_size!r}.",
+            )
         models = self.cfg.get('models')
         if not isinstance(models, list):
             return

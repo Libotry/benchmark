@@ -737,7 +737,12 @@ class TestConfigManager(unittest.TestCase):
         self.assertTrue(generation_kwargs['logprobs'])
         self.assertEqual(generation_kwargs['top_logprobs'], 20)
         self.assertTrue(generation_kwargs['response_anomaly_enabled'])
-        self.assertTrue(config_manager.cfg['response_anomaly']['enabled'])
+        anomaly_cfg = config_manager.cfg['response_anomaly']
+        self.assertTrue(anomaly_cfg['enabled'])
+        self.assertEqual(anomaly_cfg['detection_mode'], 'post_inference')
+        self.assertEqual(anomaly_cfg['detector_read_batch_size'], 64)
+        self.assertEqual(anomaly_cfg['payload_storage']['format'], 'parquet')
+        self.assertEqual(anomaly_cfg['payload_storage']['compression'], 'zstd')
 
     def test_response_anomaly_overrides_explicit_logprobs_config(self):
         """启用异常检测时强制覆盖模型里显式的 logprobs/top_logprobs。"""
@@ -774,6 +779,25 @@ class TestConfigManager(unittest.TestCase):
         config_manager = ConfigManager(self.args)
         config_manager.cfg = {
             'response_anomaly': {'top_logprobs': 0},
+            'models': [{'abbr': 'model', 'attr': 'service'}],
+            'datasets': [{'abbr': 'dataset'}],
+            'cli_args': {},
+        }
+
+        with self.assertRaises(AISBenchConfigError):
+            config_manager._init_response_anomaly_config()
+
+    def test_response_anomaly_rejects_invalid_payload_storage(self):
+        self.args.mode = 'all'
+        self.args.response_anomaly = True
+        config_manager = ConfigManager(self.args)
+        config_manager.cfg = {
+            'response_anomaly': {
+                'payload_storage': {
+                    'write_batch_size': 100,
+                    'rows_per_shard': 10,
+                }
+            },
             'models': [{'abbr': 'model', 'attr': 'service'}],
             'datasets': [{'abbr': 'dataset'}],
             'cli_args': {},

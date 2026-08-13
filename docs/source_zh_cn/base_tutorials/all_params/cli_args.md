@@ -61,6 +61,17 @@ ais_bench [OPTIONS]
 response_anomaly = dict(
 	enabled=True,
 	top_logprobs=20,
+	detection_mode='post_inference',
+	payload_storage=dict(
+		format='parquet',
+		compression='zstd',
+		compression_level=3,
+		write_batch_size=64,
+		rows_per_shard=2000,
+		max_buffered_rows=256,
+		write_failure='fail',
+	),
+	detector_read_batch_size=64,
 )
 ```
 
@@ -90,9 +101,9 @@ ais_bench-gen-response-anomaly-config \
   --output-dir ./msprobe_configs
 ```
 
-启用后，AISBench 会在服务推理请求中补充 `logprobs=True` 与 `top_logprobs`。推理结束即启动后台检测，检测结果写入 `response_anomaly/<模型>/<数据集>.jsonl`；每个 Case 包含 `is_anomaly`、`anomaly_type`（0：正常，1：生僻字，2：乱码，3：重复，4：NaN Value）和 `detection_status`。状态面板会显示 `ResponseAnomaly` 进度及各类型数量，检测未完成时面板保持刷新；`infer`/`infer_judge` 等无后续评测面板的模式会在收尾阶段启动独立监控展示检测进度。
+启用后，AISBench 会在服务推理请求中补充 `logprobs=True` 与 `top_logprobs`。完整 tokens/logprobs 按 worker 写入 `response_anomaly/<模型>/payload/<数据集>/part-*.parquet`，使用 ZSTD 压缩，不进入 prediction 或普通 tmp。推理结束后，后台检测线程按 RecordBatch 流式读取 Parquet，结果写入 `response_anomaly/<模型>/<数据集>.jsonl`，并将轻量摘要合并回 prediction。Parquet 分片和带 SHA-256 的 `payload_manifest.json` 长期保留，可用于离线复检。
 
-检测通过 msProbe 的 `ILLDetector(config_path, mtype_path, tk2cat_path).run(...)` 完成，三个文件路径均可由 AISBench 配置。请先安装 AISBench 的可选依赖：`pip install 'ais-bench-benchmark[response_anomaly]'`。安装过程中 pip 会从 GitCode 下载并构建已固定提交的 msProbe 源码，因此安装环境需要 Git 和网络访问。服务响应必须包含 `token_ids`（或 `tokens`）和 `topk_logprobs`；缺少这些字段的 Case 会以 `skipped` 状态落盘。`model_name` 需与 msProbe 的 `mtype_config.json` 配置以及 token 分类映射保持一致。使用 `--reuse` 时，已有检测结果按 Case id 继承，已完成 Case 不会重复检测。
+检测通过 msProbe 的 `ILLDetector(config_path, mtype_path, tk2cat_path).run(...)` 完成，三个文件路径均可由 AISBench 配置。请先安装 AISBench 的可选依赖：`pip install 'ais-bench-benchmark[response_anomaly]'`，该 extra 同时安装 msProbe 与 pyarrow。服务响应必须包含 `token_ids`（或 `tokens`）和 `topk_logprobs`；缺少这些字段的 Case 会以 `skipped` 状态落盘。`model_name` 需与 msProbe 的 `mtype_config.json` 配置以及 token 分类映射保持一致。使用 `--reuse` 时，已有检测结果按 `id + uuid` 继承，已完成 Case 不会重复检测。
 
 部分全局常量不区分任务类型，推荐保持默认；如需自定义，可编辑常量文件：[`global_consts.py`](https://github.com/AISBench/benchmark/tree/master/ais_bench/benchmark/global_consts.py)配置。
 当前支持的参数配置如下：
