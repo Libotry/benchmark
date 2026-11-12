@@ -1,7 +1,7 @@
 # SKILL 测评：ascend-llm-deploy-eval
 
-针对 [`AISBench/benchmark`](https://github.com/AISBench/benchmark) 仓 `.agents/skills/ascend-llm-deploy-eval`
-做的一套**可执行、可复现、可迁移**的 SKILL 测评。
+针对本仓 [`.agents/skills/ascend-llm-deploy-eval`](../skills/ascend-llm-deploy-eval/SKILL.md)
+（上游 `AISBench/benchmark` 同名 skill）做的一套**可执行、可复现、可迁移**的 SKILL 测评。
 
 选的是「⚡ 功能效果」这一档：不看 SKILL 写得漂不漂亮，看它承诺的行为在真实输入下**还成立不成立**。
 
