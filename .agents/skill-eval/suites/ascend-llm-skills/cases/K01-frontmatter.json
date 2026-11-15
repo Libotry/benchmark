@@ -1,0 +1,53 @@
+{
+  "id": "K01",
+  "title": "五个新技能的 frontmatter 完整",
+  "dimension": "文档规范",
+  "weight": 4,
+  "fixture": "base",
+  "adapter": {
+    "type": "static"
+  },
+  "why": "Agent 依据 frontmatter 的 name/description 决定是否加载；缺一项就无法被稳定召回。",
+  "expect": [
+    {
+      "type": "frontmatter",
+      "path": "skills/ascend-llm-router/SKILL.md",
+      "require": [
+        "name",
+        "description"
+      ]
+    },
+    {
+      "type": "frontmatter",
+      "path": "skills/ascend-llm-plan/SKILL.md",
+      "require": [
+        "name",
+        "description"
+      ]
+    },
+    {
+      "type": "frontmatter",
+      "path": "skills/ascend-llm-deployment/SKILL.md",
+      "require": [
+        "name",
+        "description"
+      ]
+    },
+    {
+      "type": "frontmatter",
+      "path": "skills/ascend-llm-eval/SKILL.md",
+      "require": [
+        "name",
+        "description"
+      ]
+    },
+    {
+      "type": "frontmatter",
+      "path": "skills/ascend-llm-release/SKILL.md",
+      "require": [
+        "name",
+        "description"
+      ]
+    }
+  ]
+}

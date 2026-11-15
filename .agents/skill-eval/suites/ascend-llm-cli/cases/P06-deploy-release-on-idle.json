@@ -1,0 +1,29 @@
+{
+  "fixture": "deploy",
+  "dimension": "D1 部署输入契约",
+  "id": "P06",
+  "title": "部署输入要求空闲即释放时拒绝",
+  "weight": 4,
+  "why": "README「保留服务策略必须显式为 keep_service」；只部署的语义是保留服务，改成 release_owned 属于另一个策略。",
+  "patch": [
+    {
+      "file": "job_spec.json",
+      "pointer": "/deployment/policy/on_idle",
+      "value": "release_owned"
+    }
+  ],
+  "expect": [
+    {
+      "type": "exit_code",
+      "value": 2
+    },
+    {
+      "type": "stdout_contains",
+      "value": "must be retained"
+    },
+    {
+      "type": "dir_absent",
+      "value": "run:prepared"
+    }
+  ]
+}

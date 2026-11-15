@@ -1,0 +1,29 @@
+{
+  "fixture": "deploy",
+  "dimension": "D1 部署输入契约",
+  "id": "P04",
+  "title": "部署输入出现多余顶层字段时拒绝",
+  "weight": 4,
+  "why": "deploy 阶段只允许 stage/destination/deployment/bindings 四个字段；多余字段意味着调用方误解了契约。",
+  "patch": [
+    {
+      "file": "job_spec.json",
+      "pointer": "/task_id",
+      "value": "dep-02"
+    }
+  ],
+  "expect": [
+    {
+      "type": "exit_code",
+      "value": 2
+    },
+    {
+      "type": "stdout_contains",
+      "value": "deployment input fields"
+    },
+    {
+      "type": "dir_absent",
+      "value": "run:prepared"
+    }
+  ]
+}

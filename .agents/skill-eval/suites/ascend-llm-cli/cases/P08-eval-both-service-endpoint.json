@@ -1,0 +1,32 @@
+{
+  "fixture": "eval",
+  "dimension": "D2 评测输入契约",
+  "id": "P08",
+  "title": "同时给 service 与 endpoint 时拒绝",
+  "weight": 3,
+  "why": "「provide service or endpoint, exclusively」——两种服务来源只能二选一，否则无法确定信谁的 endpoint。",
+  "patch": [
+    {
+      "file": "job_spec.json",
+      "pointer": "/service",
+      "value": {
+        "endpoint": "http://10.0.0.99:8000",
+        "model": "other"
+      }
+    }
+  ],
+  "expect": [
+    {
+      "type": "exit_code",
+      "value": 2
+    },
+    {
+      "type": "stdout_contains",
+      "value": "provide service or endpoint, exclusively"
+    },
+    {
+      "type": "dir_absent",
+      "value": "run:prepared"
+    }
+  ]
+}

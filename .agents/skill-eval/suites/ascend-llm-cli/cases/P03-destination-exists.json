@@ -1,0 +1,29 @@
+{
+  "fixture": "deploy",
+  "dimension": "D1 部署输入契约",
+  "id": "P03",
+  "title": "目标目录已存在时拒绝覆盖",
+  "weight": 4,
+  "why": "「preparation destination exists」——准备阶段不能覆盖已有目录，避免把上一次的审阅产物冲掉。",
+  "patch": [
+    {
+      "file": "job_spec.json",
+      "pointer": "/destination",
+      "value": "."
+    }
+  ],
+  "expect": [
+    {
+      "type": "exit_code",
+      "value": 2
+    },
+    {
+      "type": "stdout_contains",
+      "value": "\"code\":\"REQUEST_CONFLICT\""
+    },
+    {
+      "type": "stdout_contains",
+      "value": "preparation destination exists"
+    }
+  ]
+}

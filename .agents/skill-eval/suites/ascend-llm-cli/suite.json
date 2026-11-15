@@ -1,0 +1,35 @@
+﻿{
+  "name": "ascend-llm-cli",
+  "version": "0.1.0",
+  "skill": {
+    "name": "ascend-llm-cli",
+    "repo": "AISBench/benchmark",
+    "path": ".agents/ascend_llm_cli",
+    "ref": "feat/ascend-llm-skills",
+    "commit": "25463f377deb761a29a240184e2786faddf9a4ec",
+    "local_dir": "../../../ascend_llm_cli",
+    "requires_skill_md": false
+  },
+  "adapter": {
+    "type": "command",
+    "workdir": "{case_dir}",
+    "command": [
+      "{python}",
+      "-m",
+      "deploy_eval_v2",
+      "prepare-inputs",
+      "--request",
+      "{job_spec}"
+    ],
+    "env": {
+      "PYTHONPATH": "{deps}{pathsep}{skill_dir}/src"
+    },
+    "note": "只调用 prepare-inputs：文档明确其「仅本地校验，不授权、不连接现场、不执行部署」。请求里的 destination 用相对路径 run/prepared，由 CLI 相对 workdir 解析，保证每个用例独立目录。"
+  },
+  "limits": [
+    "只覆盖 prepare-inputs 的本地校验与落盘契约（deploy/eval 两阶段），不覆盖 deploy/eval/release 的实际执行、SSH、Docker、NPU、AISBench 实跑。",
+    "本 CLI 的输入是单个请求 JSON，占用 fixture 的 job_spec 槽位；bindings 槽位不使用（空对象）。",
+    "五个新 SKILL（router/plan/deployment/eval/release）只做静态检查（frontmatter、链接、导航登记），不评其对话质量。",
+    "已知两处报错信息质量问题（多余字段与缺 tester）在用例中只断言错误码，不断言措辞，详见报告备注。"
+  ]
+}

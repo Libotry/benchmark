@@ -1,0 +1,33 @@
+{
+  "id": "K02",
+  "title": "五个新技能引用的相对文件都存在",
+  "dimension": "文档规范",
+  "weight": 4,
+  "fixture": "base",
+  "adapter": {
+    "type": "static"
+  },
+  "why": "五个技能用 references/ 承载契约细节；断链会让 Agent 拿到空规则继续执行，是最常见的隐性破坏。",
+  "expect": [
+    {
+      "type": "relative_links_exist",
+      "path": "skills/ascend-llm-router/SKILL.md"
+    },
+    {
+      "type": "relative_links_exist",
+      "path": "skills/ascend-llm-plan/SKILL.md"
+    },
+    {
+      "type": "relative_links_exist",
+      "path": "skills/ascend-llm-deployment/SKILL.md"
+    },
+    {
+      "type": "relative_links_exist",
+      "path": "skills/ascend-llm-eval/SKILL.md"
+    },
+    {
+      "type": "relative_links_exist",
+      "path": "skills/ascend-llm-release/SKILL.md"
+    }
+  ]
+}

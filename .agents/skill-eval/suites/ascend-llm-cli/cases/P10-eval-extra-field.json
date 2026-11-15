@@ -1,0 +1,29 @@
+{
+  "fixture": "eval",
+  "dimension": "D2 评测输入契约",
+  "id": "P10",
+  "title": "评测输入出现未知字段时拒绝（只断言错误码）",
+  "weight": 3,
+  "why": "未知字段必须拒绝。注：当前报错文案复用了 XOR 分支的措辞（见报告「已知问题」），所以这里只断言错误码，不断言措辞。",
+  "patch": [
+    {
+      "file": "job_spec.json",
+      "pointer": "/bogus",
+      "value": 1
+    }
+  ],
+  "expect": [
+    {
+      "type": "exit_code",
+      "value": 2
+    },
+    {
+      "type": "stdout_contains",
+      "value": "\"code\":\"INVALID_INPUT\""
+    },
+    {
+      "type": "dir_absent",
+      "value": "run:prepared"
+    }
+  ]
+}

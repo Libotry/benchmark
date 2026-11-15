@@ -1,0 +1,33 @@
+{
+  "stage": "eval",
+  "destination": "run/prepared",
+  "task_id": "eval-01",
+  "endpoint": "http://10.0.0.11:18056",
+  "model": "demo-model",
+  "tester": {
+    "host": "10.0.0.11",
+    "work_root": "/work/tasks",
+    "python": "/venv/bin/python",
+    "aisbench": "/venv/bin/ais_bench",
+    "model_path": "/mnt/models/demo-model",
+    "datasets": {
+      "synthetic": {
+        "type": "aisbench_synthetic"
+      }
+    }
+  },
+  "cases": [
+    {
+      "case_id": "c1",
+      "concurrency": 1,
+      "input_tokens": 128,
+      "output_tokens": 16,
+      "formal_requests": 4,
+      "num_warmups": 1,
+      "steady_state": false,
+      "reset_cache": false,
+      "dataset_id": "synthetic",
+      "timeout_seconds": 300
+    }
+  ]
+}

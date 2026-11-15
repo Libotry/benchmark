@@ -1,0 +1,21 @@
+{
+  "name": "ascend-llm-skills",
+  "version": "0.1.0",
+  "skill": {
+    "name": ".agents",
+    "repo": "AISBench/benchmark",
+    "path": ".agents",
+    "ref": "feat/ascend-llm-skills",
+    "commit": "25463f377deb761a29a240184e2786faddf9a4ec",
+    "local_dir": "../../..",
+    "requires_skill_md": false
+  },
+  "adapter": {
+    "type": "static",
+    "command": [],
+    "note": "纯静态：只检查五个新技能的 SKILL.md 与导航登记，不执行任何命令。"
+  },
+  "limits": [
+    "只评文档规范（frontmatter、链接、导航登记），不评五个技能的对话质量与阶段性行为；那些要靠 CLI 契约层的 ascend-llm-cli 套件与实机验收。"
+  ]
+}

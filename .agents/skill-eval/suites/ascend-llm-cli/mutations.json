@@ -1,0 +1,52 @@
+[
+  {
+    "id": "M1",
+    "description": "去掉「部署输入不得嵌入 evaluation」的拦截",
+    "edits": [
+      ["src/deploy_eval_v2/stage_inputs.py",
+       "if 'evaluation' in plan or 'testers' in bindings:",
+       "if False:"]
+    ],
+    "expect": ["P05"]
+  },
+  {
+    "id": "M2",
+    "description": "评测任务错误地继承 release 权限（ownership 语义被破坏）",
+    "edits": [
+      ["src/deploy_eval_v2/stage_inputs.py",
+       "permissions=dict(reset_cache=False,restart=False,release=False)",
+       "permissions=dict(reset_cache=False,restart=False,release=True)"]
+    ],
+    "expect": ["P07"]
+  },
+  {
+    "id": "M3",
+    "description": "去掉「只部署必须保留服务」的策略校验",
+    "edits": [
+      ["src/deploy_eval_v2/stage_inputs.py",
+       "if not isinstance(plan.get('policy'),dict) or plan['policy'].get('on_idle')!='keep_service':",
+       "if False:"]
+    ],
+    "expect": ["P06"]
+  },
+  {
+    "id": "M4",
+    "description": "去掉目标目录冲突检查（允许覆盖上一次审阅产物）",
+    "edits": [
+      ["src/deploy_eval_v2/stage_inputs.py",
+       "if destination.exists():\n        raise ProtocolError('REQUEST_CONFLICT: preparation destination exists')",
+       "if False:\n        raise ProtocolError('REQUEST_CONFLICT: preparation destination exists')"]
+    ],
+    "expect": ["P03"]
+  },
+  {
+    "id": "M5",
+    "description": "允许 service 与 endpoint 同时出现（XOR 校验失效）",
+    "edits": [
+      ["src/deploy_eval_v2/stage_inputs.py",
+       "if set(request)-allowed or ('service' in request)==('endpoint' in request):",
+       "if set(request)-allowed:"]
+    ],
+    "expect": ["P08"]
+  }
+]

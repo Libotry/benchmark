@@ -1,0 +1,25 @@
+{
+  "fixture": "eval",
+  "dimension": "D2 评测输入契约",
+  "id": "P11",
+  "title": "缺少 tester 时拒绝（只断言错误码）",
+  "weight": 3,
+  "why": "没有 tester 就无法确定执行端。注：当前错误信息只有 INVALID_INPUT、没有细节，见报告「已知问题」。",
+  "patch": [
+    {
+      "file": "job_spec.json",
+      "pointer": "/tester",
+      "op": "remove"
+    }
+  ],
+  "expect": [
+    {
+      "type": "exit_code",
+      "value": 2
+    },
+    {
+      "type": "stdout_contains",
+      "value": "\"code\":\"INVALID_INPUT\""
+    }
+  ]
+}

@@ -1,0 +1,91 @@
+{
+  "fixture": "eval",
+  "dimension": "D2 评测输入契约",
+  "id": "P07",
+  "title": "评测输入归一化为 external_eval，且不继承释放权限",
+  "weight": 6,
+  "why": "README「评测任务不继承服务生产者的释放权限」；service 的 ownership/permissions 必须由 CLI 生成，而不是沿用请求。",
+  "expect": [
+    {
+      "type": "exit_code",
+      "value": 0
+    },
+    {
+      "type": "stdout_contains",
+      "value": "\"status\":\"EVENTS\""
+    },
+    {
+      "type": "file_exists",
+      "value": [
+        "prepared/plan.json",
+        "prepared/bindings.json"
+      ]
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/intent",
+      "value": "external_eval"
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/service/ownership",
+      "value": "external"
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/service/permissions/release",
+      "value": false
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/service/permissions/reset_cache",
+      "value": false
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/service/permissions/restart",
+      "value": false
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/service/health_path",
+      "value": "/health"
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/policy/on_idle",
+      "value": "keep_external_service"
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/policy/on_failure",
+      "value": "stop_owned_clients"
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/test_binding",
+      "value": "tester"
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/cases/0/formal_requests",
+      "value": 4
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/bindings.json",
+      "pointer": "/testers/tester/host",
+      "value": "10.0.0.11"
+    }
+  ]
+}

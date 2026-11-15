@@ -1,0 +1,67 @@
+{
+  "fixture": "deploy",
+  "dimension": "D1 部署输入契约",
+  "id": "P01",
+  "title": "部署输入通过本地校验并落盘 plan/bindings",
+  "weight": 6,
+  "why": "README「先使用 prepare-inputs 把业务 JSON 转成待审阅的 plan.json / bindings.json。此步骤仅本地校验，不授权、不连接现场、不执行部署」。",
+  "expect": [
+    {
+      "type": "exit_code",
+      "value": 0
+    },
+    {
+      "type": "stdout_contains",
+      "value": "\"status\":\"EVENTS\""
+    },
+    {
+      "type": "stdout_contains",
+      "value": "\"review_required\":true"
+    },
+    {
+      "type": "stdout_contains",
+      "value": "\"remote_checks\":\"NOT_RUN\""
+    },
+    {
+      "type": "stdout_contains",
+      "value": "\"derived\":[]"
+    },
+    {
+      "type": "file_exists",
+      "value": [
+        "prepared/plan.json",
+        "prepared/bindings.json"
+      ]
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/intent",
+      "value": "deploy"
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/task_id",
+      "value": "dep-01"
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/policy/on_idle",
+      "value": "keep_service"
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/plan.json",
+      "pointer": "/deployment/id",
+      "value": "pd-a"
+    },
+    {
+      "type": "json_equals",
+      "path": "prepared/bindings.json",
+      "pointer": "/schema_version",
+      "value": "1.0"
+    }
+  ]
+}

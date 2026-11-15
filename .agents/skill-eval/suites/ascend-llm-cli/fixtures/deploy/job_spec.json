@@ -1,0 +1,229 @@
+{
+  "stage": "deploy",
+  "destination": "run/prepared",
+  "deployment": {
+    "schema_version": "1.0",
+    "task_id": "dep-01",
+    "intent": "deploy",
+    "deployment": {
+      "id": "pd-a",
+      "topology": "pd",
+      "model": {
+        "id": "dsv4",
+        "served_name": "demo-model"
+      },
+      "runtime": {
+        "image": "registry.example/vllm-ascend:verified-tag",
+        "container": {
+          "shm_size": "500g",
+          "privileged": true
+        }
+      },
+      "instances": [
+        {
+          "id": "prefill",
+          "role": "prefill",
+          "placement": {
+            "node": "node_a",
+            "devices": [
+              0,
+              1,
+              2,
+              3
+            ]
+          },
+          "launch": {
+            "program": "vllm serve",
+            "args": {
+              "data-parallel-size": 2,
+              "tensor-parallel-size": 2,
+              "max-model-len": 131072,
+              "max-num-batched-tokens": 8192,
+              "gpu-memory-utilization": 0.9,
+              "max-num-seqs": 64,
+              "block-size": 32,
+              "enable-prefix-caching": true,
+              "trust-remote-code": true
+            },
+            "env": {
+              "VLLM_SERVER_DEV_MODE": "1"
+            },
+            "bootstrap": "set -o pipefail\nunset http_proxy https_proxy\nsource {{paths.shell_rc}}\nsource {{paths.ascend_env}} 2>/dev/null || true\nexport HCCL_ALGO=level0:fullmesh\nexport ASCEND_LOCAL_COMM_RES_PATH={{paths.comm}}\nexport LD_PRELOAD={{paths.opapi}}\n",
+            "preserve_reference": true,
+            "engine_id": "prefill"
+          },
+          "ports": {
+            "http": 1,
+            "kv": 1,
+            "rpc": 4,
+            "hccl": 16
+          },
+          "checks": {
+            "health": "/health",
+            "prefix_cache_reset": "/reset_prefix_cache",
+            "metrics": "/metrics"
+          }
+        },
+        {
+          "id": "decode",
+          "role": "decode",
+          "placement": {
+            "node": "node_a",
+            "devices": [
+              4,
+              5,
+              6,
+              7
+            ]
+          },
+          "launch": {
+            "program": "vllm serve",
+            "args": {
+              "data-parallel-size": 4,
+              "tensor-parallel-size": 1,
+              "max-model-len": 131072,
+              "max-num-batched-tokens": 512,
+              "gpu-memory-utilization": 0.92,
+              "max-num-seqs": 64,
+              "block-size": 32,
+              "enable-prefix-caching": true,
+              "trust-remote-code": true
+            },
+            "env": {
+              "VLLM_SERVER_DEV_MODE": "1"
+            },
+            "bootstrap": "set -o pipefail\nunset http_proxy https_proxy\nsource {{paths.shell_rc}}\nsource {{paths.ascend_env}} 2>/dev/null || true\nexport HCCL_ALGO=level0:fullmesh\nexport ASCEND_LOCAL_COMM_RES_PATH={{paths.comm}}\n",
+            "preserve_reference": true,
+            "engine_id": "decode"
+          },
+          "ports": {
+            "http": 1,
+            "kv": 1,
+            "rpc": 4,
+            "hccl": 16
+          },
+          "checks": {
+            "health": "/health",
+            "prefix_cache_reset": "/reset_prefix_cache",
+            "metrics": "/metrics"
+          }
+        },
+        {
+          "id": "proxy",
+          "role": "proxy",
+          "placement": {
+            "node": "node_a",
+            "devices": []
+          },
+          "launch": {
+            "adapter": "external_pd_proxy",
+            "bootstrap": "unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY\n"
+          },
+          "ports": {
+            "http": 1
+          },
+          "checks": {
+            "health": "/healthcheck"
+          }
+        }
+      ],
+      "connections": {
+        "kv_transfer": [
+          {
+            "producer": "prefill",
+            "consumer": "decode",
+            "connector": "MooncakeHybridConnector"
+          }
+        ],
+        "routing": [
+          {
+            "proxy": "proxy",
+            "prefillers": [
+              "prefill"
+            ],
+            "decoders": [
+              "decode"
+            ]
+          }
+        ]
+      },
+      "endpoint": {
+        "instance": "proxy",
+        "port": "http"
+      }
+    },
+    "policy": {
+      "idle_timeout_seconds": 900,
+      "on_idle": "keep_service",
+      "on_failure": "release_owned"
+    },
+    "execution": {
+      "startup_timeout_seconds": 1800,
+      "smoke_timeout_seconds": 240,
+      "dependency_timeout_seconds": 120,
+      "proxy_start_after_models_healthy": true,
+      "enable_cache_reset_api": true,
+      "max_retries": 3
+    },
+    "unresolved": []
+  },
+  "bindings": {
+    "schema_version": "1.0",
+    "task_id": "dep-01",
+    "nodes": {
+      "node_a": {
+        "host": "root@10.0.0.11",
+        "work_dir": "/work/eval",
+        "model_paths": {
+          "dsv4": "/mnt/models/demo-model"
+        },
+        "paths": {
+          "shell_rc": "/root/.bashrc",
+          "ascend_env": "/usr/local/Ascend/ascend-toolkit/set_env.sh",
+          "atb_env": "/usr/local/Ascend/nnal/atb/set_env.sh",
+          "opapi": "/usr/local/Ascend/ascend-toolkit/latest/lib64/libopapi_nn.so",
+          "comm": "/etc/hixlep",
+          "proxy_program": "/opt/pd-proxy/proxy.py"
+        },
+        "mounts": [],
+        "benchmark": {
+          "datasets": {
+            "default": {
+              "path": "/data/eval.jsonl",
+              "input_column": "question",
+              "output_column": "answer"
+            },
+            "synthetic": {
+              "type": "aisbench_synthetic"
+            }
+          }
+        },
+        "deployments": {
+          "pd-a": {
+            "network": {
+              "ip": "10.0.0.11",
+              "interface": "eth0"
+            },
+            "ports": {
+              "prefill": {
+                "http": 18000,
+                "kv": 18002,
+                "rpc": 18004,
+                "hccl": 18009
+              },
+              "decode": {
+                "http": 18026,
+                "kv": 18028,
+                "rpc": 18030,
+                "hccl": 18039
+              },
+              "proxy": {
+                "http": 18056
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

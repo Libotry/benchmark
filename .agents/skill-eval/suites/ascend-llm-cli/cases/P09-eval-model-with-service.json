@@ -1,0 +1,38 @@
+{
+  "fixture": "eval",
+  "dimension": "D2 评测输入契约",
+  "id": "P09",
+  "title": "给了 service 又单独给 model 时拒绝",
+  "weight": 3,
+  "why": "「model must come from supplied service」——model 必须来自服务对象，防止评测打到与 service 不一致的模型名。",
+  "patch": [
+    {
+      "file": "job_spec.json",
+      "pointer": "/endpoint",
+      "op": "remove"
+    },
+    {
+      "file": "job_spec.json",
+      "pointer": "/service",
+      "value": {
+        "endpoint": "http://10.0.0.11:18056",
+        "model": "demo-model"
+      }
+    },
+    {
+      "file": "job_spec.json",
+      "pointer": "/model",
+      "value": "another-model"
+    }
+  ],
+  "expect": [
+    {
+      "type": "exit_code",
+      "value": 2
+    },
+    {
+      "type": "stdout_contains",
+      "value": "model must come from supplied service"
+    }
+  ]
+}

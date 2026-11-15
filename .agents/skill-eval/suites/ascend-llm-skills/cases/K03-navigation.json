@@ -1,0 +1,24 @@
+{
+  "id": "K03",
+  "title": "README 导航登记了五个新技能",
+  "dimension": "文档规范",
+  "weight": 3,
+  "fixture": "base",
+  "adapter": {
+    "type": "static"
+  },
+  "why": "`.agents/README.md` 是技能入口表；新增技能不登记等于没人能找到。",
+  "expect": [
+    {
+      "type": "text_contains",
+      "path": "skill:README.md",
+      "value": [
+        "skills/ascend-llm-router/SKILL.md",
+        "skills/ascend-llm-plan/SKILL.md",
+        "skills/ascend-llm-deployment/SKILL.md",
+        "skills/ascend-llm-eval/SKILL.md",
+        "skills/ascend-llm-release/SKILL.md"
+      ]
+    }
+  ]
+}

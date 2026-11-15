@@ -1,0 +1,33 @@
+{
+  "fixture": "deploy",
+  "dimension": "D1 部署输入契约",
+  "id": "P02",
+  "title": "stage 非法时明确拒绝",
+  "weight": 3,
+  "why": "stage_inputs.prepare：stage 只接受 deploy/eval；未知阶段不能被猜成部署。",
+  "patch": [
+    {
+      "file": "job_spec.json",
+      "pointer": "/stage",
+      "value": "deployy"
+    }
+  ],
+  "expect": [
+    {
+      "type": "exit_code",
+      "value": 2
+    },
+    {
+      "type": "stdout_contains",
+      "value": "\"code\":\"INVALID_INPUT\""
+    },
+    {
+      "type": "stdout_contains",
+      "value": "stage must be deploy or eval"
+    },
+    {
+      "type": "dir_absent",
+      "value": "run:prepared"
+    }
+  ]
+}

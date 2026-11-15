@@ -1,0 +1,32 @@
+{
+  "fixture": "deploy",
+  "dimension": "D1 部署输入契约",
+  "id": "P05",
+  "title": "部署输入里夹带 evaluation 时拒绝",
+  "weight": 4,
+  "why": "README「部署输入禁止嵌入 evaluation/testers」；部署与评测是两阶段，混在一起会绕过独立评测的授权边界。",
+  "patch": [
+    {
+      "file": "job_spec.json",
+      "pointer": "/deployment/evaluation",
+      "value": {
+        "cases": [],
+        "test_binding": "tester"
+      }
+    }
+  ],
+  "expect": [
+    {
+      "type": "exit_code",
+      "value": 2
+    },
+    {
+      "type": "stdout_contains",
+      "value": "cannot embed evaluation"
+    },
+    {
+      "type": "dir_absent",
+      "value": "run:prepared"
+    }
+  ]
+}
